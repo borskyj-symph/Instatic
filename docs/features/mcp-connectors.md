@@ -144,14 +144,36 @@ executeAiTool(...) / live editor bridge
 | `editorBridge.ts` | Per-user, per-scope live workspace bridge. The stream carries an **idle lease** (120s, re-armed by every relayed tool request) so an active batch is never cut mid-flight; only quiet streams recycle. The workspace's reconnect loop (`useMcpWorkspaceBridge`) reopens a recycled healthy stream immediately off the stream-end network event — deliberately timer-free, because hidden webviews (backgrounded browser tabs) clamp timers to minutes while network events still fire — and a tab becoming visible short-circuits any pending retry delay. |
 | `tools/publishTool.ts` | Explicit canonical full-site publish with MCP audit metadata. |
 | `tools/uploadMediaTool.ts` | Server-resolved image upload (`media_upload`) — inline base64 or SSRF-guarded `sourceUrl` download, through the shared media pipeline. |
+| `../tools/data/` | Server-resolved schema and row tools for reusable data tables (`data_*`). Shared with the in-app `data` chat scope; the MCP registry passes a runtime so writes are attributed to the connection. |
 
 ## Tool execution model
 
 MCP exposes the full deduplicated tool catalog, filtered by the connection's capabilities.
 
-Server-resolved tools work without an editor open. They include content reads, `get_context`, `site_list_documents`, `site_read_styles`, `site_list_breakpoints`, `media_upload`, and explicit `site_publish`. Publishing requires `ai.tools.write` plus `pages.publish`, runs the canonical full-site pipeline, swaps the static slot atomically, and records the connection id in the publish audit event.
+Server-resolved tools work without an editor open. They include content reads, the whole `data_*` toolset, `get_context`, `site_list_documents`, `site_read_styles`, `site_list_breakpoints`, `media_upload`, and explicit `site_publish`. Publishing requires `ai.tools.write` plus `pages.publish`, runs the canonical full-site pipeline, swaps the static slot atomically, and records the connection id in the publish audit event.
 
 `media_upload` is the one server-resolved write that mutates outside the live editor draft: it adds an image to the Media library through the same `acceptUploadedMedia` core the HTTP route uses (magic-byte sniffing, SVG sanitisation, storage dispatch, responsive variants). Bytes arrive inline (base64) or via an https `sourceUrl` the host downloads under the plugin network layer's SSRF blocklist — https-only, DNS-resolved, per-redirect-hop re-validation, size-capped. It requires `ai.tools.write` plus `media.write`.
+
+### Reusable data tables
+
+`content_*` covers post types — documents with a Tiptap body the Content workspace renders. Reusable tables (`kind: 'data'`: a training catalogue, a team roster, anything a page loops over) are a different shape: a grid of typed cells with no body, and `content_list_collections` deliberately does not list them.
+
+They get their own headless toolset instead of being folded into `content_*`, because routing a cell write through an open browser tab would buy nothing and would make the toolset unusable from a script or a remote agent:
+
+| Tool | Does | Requires |
+|---|---|---|
+| `data_list_tables` | Lists data tables and post types with slug, kind, route base, row count, and primary field. Page, component, and layout tables stay hidden — those are Site-editor documents. | a table read/manage capability |
+| `data_create_table` | Creates a table with its fields. `kind: 'data'` gets no route base, so its rows have no public URL; `kind: 'postType'` gets `/<slug>`. | `data.custom.tables.manage` |
+| `data_update_table` | Changes identity or replaces the field array. | a table manage capability |
+| `data_add_fields` | Appends fields, leaving stored values untouched — the safe way to evolve a schema. | a table manage capability |
+| `data_create_rows` | Creates up to 200 rows in one transaction. Any rejection writes nothing. | `content.create` |
+| `data_update_row` | Patches one row's cells (merge by default). | a content edit capability |
+| `data_set_rows_status` | Publishes, unpublishes, or drafts rows in bulk, reporting per-row outcomes. | publish for `published`, edit otherwise |
+| `data_delete_rows` | Soft-deletes rows in bulk. | a content edit capability |
+
+Publishing a row in a table with no route base is allowed and normal. No static artefact is baked because there is no route to bake it at, but the row becomes `published`, which is what an `<instatic-loop>` on some other page reads.
+
+The system tables (`pages`, `posts`, `components`, `layouts`) accept new custom fields but refuse any change to their identity or their built-in fields, enforced by the same `assertSystemTableUpdateAllowed` the HTTP route uses.
 
 Browser tools run against the connection owner's live workspace. Site structure, HTML/CSS, page lifecycle, design-token, content mutation, code-asset, and live-DOM tools route to the matching open Site or Content workspace. If that workspace is not open, the tool returns a scope-specific error while headless tools remain available. `tools/list` states that requirement in each browser tool's description, so a client learns the precondition when it picks the tool rather than from a failed call.
 
@@ -200,4 +222,5 @@ Create and manual revoke actions retain the existing `ai.mcp_connector.created` 
 - `src/__tests__/ai/mcpOAuthAuthorizationHandler.test.ts` covers signed-in consent, capability selection, exact callback redirects, denial, and privilege floors.
 - `src/__tests__/ai/mcpConnectorsHandler.test.ts` covers connection listing, personal-token creation, step-up, revoke, and privilege floors.
 - `server/ai/mcp/e2e.test.ts`, `transports/http.test.ts`, and `publishTool.test.ts` cover the real MCP request flow and publish path.
+- `server/ai/tools/data/*.test.ts` cover the data toolset against a migrated SQLite database: system-table refusals, transactional batches, slug-conflict naming, and publishing a row in a non-routable table.
 - `src/__tests__/architecture/ai-mcp-connectors-never-leak.test.ts` gates the token-free connection projection.

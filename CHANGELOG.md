@@ -4,6 +4,13 @@ All notable changes to Instatic will be documented here.
 
 This project is pre-1.0. Breaking changes may appear in minor or patch releases until a stable release line exists.
 
+## Unreleased
+
+### AI and integrations
+
+- Added a `data_*` tool scope so reusable data tables can be built and filled headlessly, over MCP or from the in-app agent ([#433](https://github.com/CoreBunch/Instatic/issues/433), [#463](https://github.com/CoreBunch/Instatic/issues/463)). Schema setup was the one manual break in an otherwise automatable pipeline: `content_list_collections` listed post types only, `content_create_document` refused a `kind: 'data'` table id, and no tool could create a table or a field at all, so an agent asked to build a training catalogue had to stop and hand the operator a list of columns to type in. Eight tools now cover the whole surface — `data_list_tables`, `data_create_table`, `data_update_table`, `data_add_fields`, `data_create_rows`, `data_update_row`, `data_set_rows_status`, `data_delete_rows` — all server-resolved, so none of them needs a workspace tab open. Row creation is transactional in batches of up to 200, and the system tables still refuse any change to their identity or built-in fields.
+- Fixed the Content workspace answering "Collection not found" for a reusable data table that exists. The id was right and the table was real; it is simply authored in the Data workspace, not in the Tiptap editor. Agents responded by creating a duplicate post type to stand in for it. The refusal now names the kind of table it is and the tool that can write it.
+
 ## 0.0.18 - 2026-09-01
 
 ### Security

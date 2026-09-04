@@ -1,8 +1,8 @@
 /**
  * Tool registry root — selects the right toolset for a chat scope.
  *
- * `site` and `content` scopes have tools registered. `data` and `plugin`
- * are reserved scopes with no toolset yet.
+ * `site`, `content`, and `data` scopes have tools registered. `plugin` is a
+ * reserved scope with no toolset yet.
  *
  * Adding a new scope:
  *   1. Create `server/ai/tools/<scope>/` with its tool files + index.ts.
@@ -25,6 +25,7 @@ import { toolAllowedForCapabilities } from './capabilityGate'
 import type { AiTool, ToolScope } from './types'
 import { siteTools } from './site'
 import { contentTools } from './content'
+import { dataTools } from './data'
 
 function scopeToolset(scope: ToolScope): AiTool[] {
   switch (scope) {
@@ -33,8 +34,10 @@ function scopeToolset(scope: ToolScope): AiTool[] {
     case 'content':
       return contentTools
     case 'data':
-      // Reserved: no data-scope toolset yet.
-      return []
+      // Schema + row tools, all server-resolved. The MCP registry builds its
+      // own copy with a runtime (see server/ai/mcp/registry.ts); the in-app
+      // agent gets the runtime-free subset.
+      return dataTools()
     case 'plugin':
       // Reserved: no plugin-scope toolset yet.
       return []

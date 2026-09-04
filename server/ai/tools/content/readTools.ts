@@ -63,6 +63,11 @@ const SCHEMA_READ_CAPS: readonly CoreCapability[] = [
  * workspaces and cannot be activated by the Content browser bridge. Keeping
  * this catalog aligned with the actual writable surface avoids advertising a
  * collection that every subsequent focus/write tool must reject.
+ *
+ * The filter stays, but it is no longer a dead end: reusable `kind: 'data'`
+ * tables are listed and written by the headless `data_*` toolset
+ * (`server/ai/tools/data/`), and the descriptions here say so. Widening this
+ * set instead would advertise tables the Tiptap editor cannot render.
  */
 const CONTENT_KIND_VISIBLE: ReadonlySet<string> = new Set(['postType'])
 
@@ -130,7 +135,7 @@ const listCollectionsTool: AiTool = {
   execution: 'server',
   requiredCapabilities: SCHEMA_READ_CAPS,
   description:
-    'List every Content-workspace collection (routable post types only) with id, slug, label, kind, row count, and primary field id. Pages are edited through Site tools; reusable tables through Data tools.',
+    'List every Content-workspace collection (routable post types only) with id, slug, label, kind, row count, and primary field id. Pages are edited through the site_* tools; reusable data tables through the data_* tools — call data_list_tables to see those, they are NOT listed here.',
   inputSchema: ListCollectionsInput,
   handler: async (_input, ctx) => {
     const tables = await listDataTablesWithCounts(ctx.db)
@@ -156,7 +161,7 @@ const getCollectionSchemaTool: AiTool = {
   execution: 'server',
   requiredCapabilities: SCHEMA_READ_CAPS,
   description:
-    "Return one collection's field schema: each field's id, label, type, required flag, builtIn flag, and per-type extras (select options, media kind, relation target). Call BEFORE content_set_document_field on an unfamiliar collection so you know the field's value shape.",
+    "Return one collection's field schema: each field's id, label, type, required flag, builtIn flag, and per-type extras (select options, media kind, relation target). Call BEFORE content_set_document_field on an unfamiliar collection so you know the field's value shape. Accepts any table id, including a reusable data table that content_list_collections does not list — its rows are written with data_create_rows / data_update_row.",
   inputSchema: GetCollectionSchemaInput,
   handler: async (input, ctx) => {
     const { tableId } = input as Static<typeof GetCollectionSchemaInput>
@@ -273,7 +278,7 @@ const searchDocumentsTool: AiTool = {
   execution: 'server',
   requiredCapabilities: DOCUMENT_READ_CAPS,
   description:
-    "Full-text search across document slugs (the slug is a URL-safe derivative of the title — reliable text proxy for free-text lookup). Returns light summaries (id, tableId, slug, status, updatedAt). `limit` default 25, max 100.",
+    "Full-text search across document slugs (the slug is a URL-safe derivative of the title — reliable text proxy for free-text lookup) in post-type collections only; rows of a reusable data table are not searched here. Returns light summaries (id, tableId, slug, status, updatedAt). `limit` default 25, max 100.",
   inputSchema: SearchDocumentsInput,
   handler: async (input, ctx) => {
     const { query, limit } = input as Static<typeof SearchDocumentsInput>
