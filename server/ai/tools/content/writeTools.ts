@@ -67,7 +67,7 @@ const createDocumentTool: AiTool = {
   execution: 'browser',
   requiredCapabilities: ['content.create'],
   description:
-    "Create a new draft document in `tableId`. `fields` is a Record<fieldId, value> per the collection's schema; omit to create an empty draft. Success data includes the new id as `documentId`; the bridge auto-switches the user's editor to the new doc so they can see what you built. Use content_set_document_status separately to publish or schedule it.",
+    "Create a new draft document in a POST TYPE (`tableId` must be one content_list_collections returned). `fields` is a Record<fieldId, value> per the collection's schema; omit to create an empty draft. Success data includes the new id as `documentId`; the bridge auto-switches the user's editor to the new doc so they can see what you built. Use content_set_document_status separately to publish or schedule it. For a row in a reusable data table, use data_create_rows instead — this tool needs the Content editor open and cannot write one.",
   inputSchema: CreateDocumentInput,
 }
 
@@ -197,7 +197,7 @@ const setActiveCollectionTool: AiTool = {
   scope: 'content',
   execution: 'browser',
   description:
-    'Switch the workspace sidebar focus to this collection. Use when working across collection-level actions (browsing, bulk reviews).',
+    'Switch the workspace sidebar focus to this collection. Use when working across collection-level actions (browsing, bulk reviews). Only post types can be focused; a reusable data table is refused with a message naming the data_* tool that can write it.',
   inputSchema: SetActiveCollectionInput,
 }
 
