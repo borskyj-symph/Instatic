@@ -254,11 +254,20 @@ function resolveFilterTokens(
     return { filters, unresolved: false }
   }
   const { text, unresolved } = interpolateTokensWithStatus(value, context ?? EMPTY_RENDER_CONTEXT)
+  // Two ways a tokenised filter ends up unusable, and both must empty the loop.
+  //
+  // A token that did not resolve is the obvious one. The other is a value that
+  // resolved to nothing but reports success: a token whose stored cell holds
+  // only whitespace, or an author-written empty fallback (`{a.b|}`). Neither
+  // counts as missing, so the per-token status stays clean while `text` trims
+  // to nothing — and `parseCellFilter` reads a blank `cellValue` as "not
+  // configured yet" and drops the condition, listing the whole table.
+  const blank = text.trim().length === 0
   return {
     filters: { ...filters, cellValue: text },
     // An operator that ignores the value never reads what failed to resolve,
     // so switching a filter to `isSet` must not empty the loop.
-    unresolved: unresolved && cellFilterUsesValue(filters.cellOperator),
+    unresolved: (unresolved || blank) && cellFilterUsesValue(filters.cellOperator),
   }
 }
 

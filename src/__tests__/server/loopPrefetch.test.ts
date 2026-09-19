@@ -294,6 +294,58 @@ describe('loopPrefetch', () => {
       expect(queried).toBe(false)
     })
 
+    it('renders nothing when every token resolved but the value is blank', async () => {
+      // A cell holding only whitespace is not "missing" — the token reports a
+      // clean resolve — but `parseCellFilter` trims the value to nothing and
+      // reads it as "not configured yet", dropping the condition. Tracking
+      // token status alone would let this list the whole table.
+      let queried = false
+      const db = createFakeDb(async (): Promise<DbResult> => {
+        queried = true
+        return { rows: [], rowCount: 0 }
+      })
+
+      const result = await prefetchLoopData(pageWithFilter('{currentEntry.slug}'), makeSite(), db, undefined, {
+        templateContext: { entryStack: [{ id: 'row_1', fields: { slug: '   ' } }] },
+      })
+
+      expect(result.get('loop')?.items).toEqual([])
+      expect(queried).toBe(false)
+    })
+
+    it('renders nothing when an empty |fallback is all that is left', async () => {
+      // `{a.b|}` is an author-written empty fallback: it fires, so the token
+      // counts as resolved, and the result is still an empty filter value.
+      let queried = false
+      const db = createFakeDb(async (): Promise<DbResult> => {
+        queried = true
+        return { rows: [], rowCount: 0 }
+      })
+
+      const result = await prefetchLoopData(pageWithFilter('{currentEntry.missing|}'), makeSite(), db, undefined, {
+        templateContext: entryContext,
+      })
+
+      expect(result.get('loop')?.items).toEqual([])
+      expect(queried).toBe(false)
+    })
+
+    it('still queries for a blank value when the operator ignores it', async () => {
+      const params: unknown[][] = []
+      const db = createFakeDb(async (sql, args): Promise<DbResult> => {
+        params.push(args ?? [])
+        if (sql.includes('from data_tables')) return { rows: [{ kind: 'data', fields_json: [] }], rowCount: 1 }
+        if (sql.includes('count(*)')) return { rows: [{ total: 0 }], rowCount: 1 }
+        return { rows: [], rowCount: 0 }
+      })
+
+      await prefetchLoopData(pageWithFilter('{currentEntry.missing|}', 'isSet'), makeSite(), db, undefined, {
+        templateContext: entryContext,
+      })
+
+      expect(params.length).toBeGreaterThan(0)
+    })
+
     it('treats a fired |fallback as resolved and queries with it', async () => {
       const params: unknown[][] = []
       const db = createFakeDb(async (sql, args): Promise<DbResult> => {
