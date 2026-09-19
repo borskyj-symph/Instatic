@@ -93,7 +93,7 @@ function setRowsStatusTool(runtime?: DataToolsRuntime): AiTool {
     mutates: true,
     requiredCapabilities: ROW_LIFECYCLE_CAPS,
     description:
-      `Publish, unpublish, or return to draft up to ${MAX_ROWS_PER_CALL} rows. Rows are processed one by one and the result lists what succeeded and what did not — a failure part-way through does not roll back the rows already published. Publishing a row in a table with no route base still makes it visible to loops on other pages; it just gets no public URL of its own.`,
+      `Publish, unpublish, or return to draft up to ${MAX_ROWS_PER_CALL} rows. Rows are processed one by one and the result lists what succeeded and what did not — a failure part-way through does not roll back the rows already published. Publishing requires the main branch: called with status 'published' from a branch the WHOLE call is refused before any row is touched, so do not retry it row by row. Unpublishing and returning to draft work on a branch. Publishing a row in a table with no route base still makes it visible to loops on other pages; it just gets no public URL of its own.`,
     inputSchema: SetRowsStatusInput,
     outputSchema: DataSetRowsStatusOutputSchema,
     handler: async (input, ctx: ToolContext) => {
