@@ -21,6 +21,8 @@ import type {
 import { loopSourceRegistry } from '@core/loops/registry'
 import { firstImagePathFromMarkdown } from '@core/markdown/renderMarkdown'
 import { normalizeRouteBase } from '@core/templates/templateMatching'
+import { containsTokens, interpolateTokens } from '@core/templates/tokenInterpolation'
+import type { TemplateRenderDataContext } from '@core/templates/renderDataContext'
 import { publicDataUserFromParts } from '@core/data/publicDataUser'
 import type { PublishedDataRow } from '@core/data/schemas'
 import type { DbClient } from '../db/client'
@@ -210,6 +212,48 @@ function readPageNumber(url: URL | undefined, loopNodeId: string): number {
 }
 
 /**
+ * Filter values an author may write tokens into.
+ *
+ * A loop's `cellValue` is the only free-text filter input, and on an entry
+ * template it is the one value that has to change per rendered row: a course
+ * page's term list filters on THAT course, not on a name typed once into a
+ * template shared by every course. Resolving it here — the single place every
+ * render path funnels through before a source fetches — keeps the sources and
+ * the SQL builder unaware that tokens exist.
+ */
+const TOKENIZED_FILTER_KEYS = ['cellValue'] as const
+
+interface ResolvedFilters {
+  filters: Record<string, unknown>
+  /**
+   * True when a filter carried tokens that resolved to nothing. The loop must
+   * then render EMPTY, never unfiltered: `parseCellFilter` reads a blank value
+   * as "not configured yet" and lists the whole table, which on an entry route
+   * would spill every other row's data onto the page.
+   */
+  unresolved: boolean
+}
+
+function resolveFilterTokens(
+  filters: Record<string, unknown>,
+  context: TemplateRenderDataContext | undefined,
+): ResolvedFilters {
+  let next: Record<string, unknown> | null = null
+  let unresolved = false
+
+  for (const key of TOKENIZED_FILTER_KEYS) {
+    const value = filters[key]
+    if (typeof value !== 'string' || !containsTokens(value)) continue
+    const resolved = context ? interpolateTokens(value, context) : ''
+    if (!resolved.trim()) unresolved = true
+    next ??= { ...filters }
+    next[key] = resolved
+  }
+
+  return { filters: next ?? filters, unresolved }
+}
+
+/**
  * Resolve one loop node by dispatching to its registered source and
  * applying the requested page slice.
  *
@@ -230,10 +274,14 @@ async function resolveOneLoop(
     request?: SourceRequestContext
     branchId?: string
     drafts?: boolean
+    templateContext?: TemplateRenderDataContext
   },
 ): Promise<ResolvedLoopData> {
   const props = readLoopProps(node)
   const pageNumber = props.pagination === 'infinite' ? readPageNumber(ctx.url, node.id) : 1
+
+  const { filters, unresolved } = resolveFilterTokens(props.filters, ctx.templateContext)
+  if (unresolved) return { items: [], totalItems: 0, pageNumber, hasMore: false }
 
   let limit = props.limit
   let offset = props.offset
@@ -245,7 +293,7 @@ async function resolveOneLoop(
   const fetchCtx: SourceFetchContext = {
     db: ctx.db,
     site: ctx.site,
-    filters: props.filters,
+    filters,
     orderBy: props.orderBy || (source.orderByOptions[0]?.id ?? ''),
     direction: props.direction,
     limit,
@@ -294,6 +342,12 @@ export async function prefetchLoopData(
     /** Branch whose rows loops read; absent means main (publishing, public routes). */
     branchId?: string
     drafts?: boolean
+    /**
+     * Render context the loop filters resolve their `{currentEntry.*}` tokens
+     * against. Absent for plain pages with no entry in scope; a tokenized
+     * filter then resolves to nothing and its loop renders empty.
+     */
+    templateContext?: TemplateRenderDataContext
   },
 ): Promise<LoopDataMap> {
   const nodes = collectLoopNodes(page, site, options?.rootNodeId)
@@ -316,6 +370,7 @@ export async function prefetchLoopData(
         request: options?.request,
         branchId: options?.branchId,
         drafts: options?.drafts,
+        templateContext: options?.templateContext,
       })
       return [node.id, data] as [string, ResolvedLoopData]
     }),

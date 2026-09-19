@@ -197,4 +197,78 @@ describe('loopPrefetch', () => {
     expect(data?.totalItems).toBe(2)
     expect(data?.items.map((it) => it.fields.title)).toEqual(['About', 'Contact'])
   })
+
+  // An entry template is one page shared by every row, so the only way its
+  // loops can filter per row is to read the row being rendered.
+  describe('tokenized cell filters', () => {
+    function pageWithFilter(cellValue: string) {
+      return makePage({
+        root: { moduleId: 'base.body', children: ['loop'] },
+        loop: {
+          moduleId: 'base.loop',
+          props: {
+            sourceId: 'data.rows',
+            filters: { tableId: 'terms', cellField: 'course', cellOperator: 'is', cellValue },
+            orderBy: 'publishedAt',
+            direction: 'desc',
+            limit: 5,
+            offset: 0,
+          },
+        },
+      })
+    }
+
+    const entryContext = {
+      entryStack: [{ id: 'row_1', fields: { slug: 'time-management', title: 'Time Management' } }],
+    }
+
+    it('resolves a filter value against the entry being rendered', async () => {
+      const params: unknown[][] = []
+      const db = createFakeDb(async (sql, args): Promise<DbResult> => {
+        params.push(args ?? [])
+        if (sql.includes('from data_tables')) return { rows: [{ kind: 'data', fields_json: [] }], rowCount: 1 }
+        if (sql.includes('count(*)')) return { rows: [{ total: 0 }], rowCount: 1 }
+        return { rows: [], rowCount: 0 }
+      })
+
+      await prefetchLoopData(pageWithFilter('{currentEntry.slug}'), makeSite(), db, undefined, {
+        templateContext: entryContext,
+      })
+
+      expect(params.some((args) => args.includes('time-management'))).toBe(true)
+      expect(params.some((args) => args.includes('{currentEntry.slug}'))).toBe(false)
+    })
+
+    it('renders nothing when the token resolves to nothing', async () => {
+      // The dangerous case: a blank value reads as "no filter" to
+      // parseCellFilter, which would list the whole table on every entry.
+      let queried = false
+      const db = createFakeDb(async (): Promise<DbResult> => {
+        queried = true
+        return { rows: [], rowCount: 0 }
+      })
+
+      const result = await prefetchLoopData(pageWithFilter('{currentEntry.missing}'), makeSite(), db, undefined, {
+        templateContext: entryContext,
+      })
+
+      expect(result.get('loop')?.items).toEqual([])
+      expect(result.get('loop')?.totalItems).toBe(0)
+      expect(queried).toBe(false)
+    })
+
+    it('leaves a plain filter value untouched', async () => {
+      const params: unknown[][] = []
+      const db = createFakeDb(async (sql, args): Promise<DbResult> => {
+        params.push(args ?? [])
+        if (sql.includes('from data_tables')) return { rows: [{ kind: 'data', fields_json: [] }], rowCount: 1 }
+        if (sql.includes('count(*)')) return { rows: [{ total: 0 }], rowCount: 1 }
+        return { rows: [], rowCount: 0 }
+      })
+
+      await prefetchLoopData(pageWithFilter('Time Management (CZ)'), makeSite(), db)
+
+      expect(params.some((args) => args.includes('Time Management (CZ)'))).toBe(true)
+    })
+  })
 })

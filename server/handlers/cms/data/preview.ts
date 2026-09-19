@@ -118,6 +118,7 @@ export async function handleRowPreview(
   }
   const loopData = await prefetchLoopData(merged, snapshot.site, db, undefined, {
     branchId: scope.branchId,
+    templateContext,
   })
   const mediaAssets = await prefetchMediaAssets(merged, snapshot.site, registry, db, {
     templateContext,
