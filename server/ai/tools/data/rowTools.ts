@@ -81,7 +81,7 @@ function createRowsTool(runtime?: DataToolsRuntime): AiTool {
     outputSchema: DataCreateRowsOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof CreateRowsInput>
-      const table = await getDataTable(ctx.db, args.tableId)
+      const table = await getDataTable(ctx.db, ctx.branch, args.tableId)
       if (!table || !canReadTable(toolActor(ctx), table)) {
         return { ok: false, error: `Table ${args.tableId} not found.` }
       }
@@ -112,7 +112,7 @@ function createRowsTool(runtime?: DataToolsRuntime): AiTool {
           if (batchSlugs.has(slug)) {
             return { ok: false, error: `Row ${index}: slug "${slug}" is used twice in this batch.` }
           }
-          const clash = await getDataRowBySlug(ctx.db, table.id, slug)
+          const clash = await getDataRowBySlug(ctx.db, ctx.branch, table.id, slug)
           if (clash) {
             return {
               ok: false,
@@ -127,12 +127,13 @@ function createRowsTool(runtime?: DataToolsRuntime): AiTool {
 
       const created = await createDataRowMany(
         ctx.db,
+        ctx.branch,
         prepared.map((row) => ({ tableId: table.id, cells: row.cells, slug: row.slug })),
         ctx.userId,
       )
 
       for (const row of created) {
-        await emitContentEntryCreated(ctx.db, row.id, { kind: 'user', userId: ctx.userId })
+        await emitContentEntryCreated(ctx.db, ctx.branch, row.id, { kind: 'user', userId: ctx.userId })
         await recordRowAudit(ctx, runtime, 'data.row.create', row)
       }
 
@@ -166,12 +167,12 @@ function updateRowTool(runtime?: DataToolsRuntime): AiTool {
     outputSchema: DataUpdateRowOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof UpdateRowInput>
-      const current = await getDataRow(ctx.db, args.rowId)
+      const current = await getDataRow(ctx.db, ctx.branch, args.rowId)
       if (!current || !canEditDataRow(toolActor(ctx), current)) {
         return { ok: false, error: `Row ${args.rowId} not found.` }
       }
 
-      const table = await getDataTable(ctx.db, current.tableId)
+      const table = await getDataTable(ctx.db, ctx.branch, current.tableId)
       if (!table) return { ok: false, error: `Row ${args.rowId} not found.` }
 
       const rawCells = args.merge === false ? args.cells : { ...current.cells, ...args.cells }
@@ -183,7 +184,7 @@ function updateRowTool(runtime?: DataToolsRuntime): AiTool {
       const slug = slugForTable(table, cells)
 
       if (slug && slug !== current.slug) {
-        const clash = await getDataRowBySlug(ctx.db, table.id, slug)
+        const clash = await getDataRowBySlug(ctx.db, ctx.branch, table.id, slug)
         if (clash && clash.id !== current.id) {
           return {
             ok: false,
@@ -192,7 +193,7 @@ function updateRowTool(runtime?: DataToolsRuntime): AiTool {
         }
       }
 
-      const row = await saveDataRowDraft(ctx.db, current.id, { cells, slug }, ctx.userId)
+      const row = await saveDataRowDraft(ctx.db, ctx.branch, current.id, { cells, slug }, ctx.userId)
       if (!row) return { ok: false, error: `Row ${args.rowId} not found.` }
 
       // Plugins loop-guard on this list, so it must include the keys the
@@ -201,7 +202,7 @@ function updateRowTool(runtime?: DataToolsRuntime): AiTool {
         ...Object.keys(args.cells),
         ...Object.keys(cells).filter((key) => cells[key] !== rawCells[key]),
       ])]
-      await emitContentEntryUpdated(ctx.db, row.id, changedIds, { kind: 'user', userId: ctx.userId })
+      await emitContentEntryUpdated(ctx.db, ctx.branch, row.id, changedIds, { kind: 'user', userId: ctx.userId })
       await recordRowAudit(ctx, runtime, 'data.row.update', row)
 
       return { row: projectRow(row) }

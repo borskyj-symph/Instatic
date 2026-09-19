@@ -16,6 +16,7 @@ import { sqliteMigrations } from '../../../db/migrations-sqlite'
 import { runMigrations } from '../../../db/runMigrations'
 import { listAuditEvents } from '../../../repositories/audit'
 import { getDataTable, getDataTableBySlug } from '../../../repositories/data'
+import { MAIN_SCOPE } from '../../../branches/scope'
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { dataTools } from './index'
 
@@ -59,6 +60,7 @@ function run(
 ): Promise<unknown> {
   const ctx: ToolContext = {
     db,
+    branch: MAIN_SCOPE,
     userId: 'user-1',
     capabilities,
     scope: 'data',
@@ -71,7 +73,7 @@ function run(
 
 /** The seeded `posts` system table, used for the frozen-surface assertions. */
 async function postsTable(db: DbClient): Promise<DataTable> {
-  const table = await getDataTableBySlug(db, 'posts')
+  const table = await getDataTableBySlug(db, MAIN_SCOPE, 'posts')
   if (!table) throw new Error('the posts system table was not seeded')
   return table
 }
@@ -176,7 +178,7 @@ describe('data_create_table', () => {
     expect(result.table.fields.map((f) => f.id)).toEqual(['name', 'price', 'bookingurl'])
 
     // The agent wires loops against what was persisted, not what it sent.
-    const stored = await getDataTable(db, result.table.id)
+    const stored = await getDataTable(db, MAIN_SCOPE, result.table.id)
     expect(stored!.fields.map((f) => f.type)).toEqual(['text', 'number', 'url'])
     expect(stored!.primaryFieldId).toBe('name')
   })
@@ -271,7 +273,7 @@ describe('data_update_table', () => {
     }, db) as { table: { fields: Array<{ id: string }> } }
 
     expect(result.table.fields.map((f) => f.id)).toEqual(['name'])
-    const stored = await getDataTable(db, tableId)
+    const stored = await getDataTable(db, MAIN_SCOPE, tableId)
     expect(stored!.fields.map((f) => f.id)).toEqual(['name'])
   })
 
@@ -305,7 +307,7 @@ describe('data_update_table', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/already exists/)
     // The rename was rejected before it was written.
-    const stored = await getDataTable(db, tableId)
+    const stored = await getDataTable(db, MAIN_SCOPE, tableId)
     expect(stored!.slug).toBe('trainings')
   })
 
@@ -328,7 +330,7 @@ describe('data_update_table', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/System tables can't change their name/)
-    const stored = await getDataTable(db, posts.id)
+    const stored = await getDataTable(db, MAIN_SCOPE, posts.id)
     expect(stored!.name).toBe(posts.name)
   })
 
@@ -379,7 +381,7 @@ describe('data_add_fields', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/already has a field with id "name"/)
     // The original label survived.
-    const stored = await getDataTable(db, tableId)
+    const stored = await getDataTable(db, MAIN_SCOPE, tableId)
     expect(stored!.fields.find((f) => f.id === 'name')!.label).toBe('Name')
   })
 

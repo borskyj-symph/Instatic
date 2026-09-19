@@ -15,6 +15,7 @@ import { sqliteMigrations } from '../../../db/migrations-sqlite'
 import { runMigrations } from '../../../db/runMigrations'
 import { listAuditEvents } from '../../../repositories/audit'
 import { getDataRow, listDataRows } from '../../../repositories/data'
+import { MAIN_SCOPE } from '../../../branches/scope'
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { dataTools } from './index'
 
@@ -59,6 +60,7 @@ function run(
 ): Promise<unknown> {
   const ctx: ToolContext = {
     db,
+    branch: MAIN_SCOPE,
     userId: 'user-1',
     capabilities,
     scope: 'data',
@@ -114,7 +116,7 @@ describe('data_set_rows_status', () => {
     expect(result.failed).toHaveLength(0)
     expect(result.updated.map((row) => row.status)).toEqual(['published', 'published'])
     // What makes a loop on another page pick the row up.
-    const stored = await getDataRow(db, seeded.rowIds[0])
+    const stored = await getDataRow(db, MAIN_SCOPE, seeded.rowIds[0])
     expect(stored!.status).toBe('published')
   })
 
@@ -127,7 +129,7 @@ describe('data_set_rows_status', () => {
     }, db) as { updated: Array<{ status: string }> }
 
     expect(result.updated[0].status).toBe('draft')
-    expect((await getDataRow(db, seeded.rowIds[1]))!.status).toBe('published')
+    expect((await getDataRow(db, MAIN_SCOPE, seeded.rowIds[1]))!.status).toBe('published')
   })
 
   it('reports the rows it could not touch and still applies the rest', async () => {
@@ -153,7 +155,7 @@ describe('data_set_rows_status', () => {
 
     expect(result.updated).toHaveLength(0)
     expect(result.failed).toHaveLength(2)
-    expect((await getDataRow(db, seeded.rowIds[0]))!.status).toBe('draft')
+    expect((await getDataRow(db, MAIN_SCOPE, seeded.rowIds[0]))!.status).toBe('draft')
   })
 
   it('audits a publish distinctly from a retraction', async () => {
@@ -182,10 +184,10 @@ describe('data_delete_rows', () => {
 
     expect(result.deleted).toHaveLength(2)
     expect(result.failed).toHaveLength(0)
-    const remaining = await listDataRows(db, seeded.tableId)
+    const remaining = await listDataRows(db, MAIN_SCOPE, seeded.tableId)
     expect(remaining.map((row) => row.id)).toEqual([seeded.rowIds[2]])
     // Soft, not hard — the row is gone from every listing but still stored.
-    expect(await getDataRow(db, seeded.rowIds[0])).toBeNull()
+    expect(await getDataRow(db, MAIN_SCOPE, seeded.rowIds[0])).toBeNull()
   })
 
   it('deletes a published row, which retracts its public route', async () => {
@@ -195,7 +197,7 @@ describe('data_delete_rows', () => {
       deleted: unknown[]
     }
     expect(result.deleted).toHaveLength(1)
-    expect(await listDataRows(db, seeded.tableId)).toHaveLength(2)
+    expect(await listDataRows(db, MAIN_SCOPE, seeded.tableId)).toHaveLength(2)
   })
 
   it('reports unknown ids without blocking the deletable ones', async () => {
@@ -214,6 +216,6 @@ describe('data_delete_rows', () => {
     }
     expect(result.deleted).toHaveLength(0)
     expect(result.failed).toHaveLength(2)
-    expect(await listDataRows(db, seeded.tableId)).toHaveLength(3)
+    expect(await listDataRows(db, MAIN_SCOPE, seeded.tableId)).toHaveLength(3)
   })
 })

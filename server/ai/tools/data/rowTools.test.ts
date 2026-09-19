@@ -16,6 +16,7 @@ import { sqliteMigrations } from '../../../db/migrations-sqlite'
 import { runMigrations } from '../../../db/runMigrations'
 import { listAuditEvents } from '../../../repositories/audit'
 import { getDataRow, listDataRows } from '../../../repositories/data'
+import { MAIN_SCOPE } from '../../../branches/scope'
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { dataTools } from './index'
 
@@ -57,6 +58,7 @@ function run(
 ): Promise<unknown> {
   const ctx: ToolContext = {
     db,
+    branch: MAIN_SCOPE,
     userId: 'user-1',
     capabilities,
     scope: 'data',
@@ -106,7 +108,7 @@ describe('data_create_rows', () => {
     expect(result.rows.every((row) => row.status === 'draft')).toBe(true)
     expect(result.rows[0].cells.price).toBe(100)
 
-    const stored = await listDataRows(db, tableId)
+    const stored = await listDataRows(db, MAIN_SCOPE, tableId)
     expect(stored).toHaveLength(3)
   })
 
@@ -123,7 +125,7 @@ describe('data_create_rows', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/used twice in this batch/)
     // Not even the first, valid row was written.
-    expect(await listDataRows(db, tableId)).toHaveLength(0)
+    expect(await listDataRows(db, MAIN_SCOPE, tableId)).toHaveLength(0)
   })
 
   it('names a collision with a row already in the table', async () => {
@@ -139,7 +141,7 @@ describe('data_create_rows', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/already exists in this table/)
-    expect(await listDataRows(db, tableId)).toHaveLength(1)
+    expect(await listDataRows(db, MAIN_SCOPE, tableId)).toHaveLength(1)
   })
 
   it('refuses a cell that targets an editor-managed built-in field', async () => {
@@ -221,7 +223,7 @@ describe('data_update_row', () => {
     }, db) as { row: { slug: string } }
 
     expect(result.row.slug).toBe('basics-reloaded')
-    const stored = await getDataRow(db, rowId)
+    const stored = await getDataRow(db, MAIN_SCOPE, rowId)
     expect(stored!.slug).toBe('basics-reloaded')
   })
 
@@ -238,7 +240,7 @@ describe('data_update_row', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/already exists in this table/)
-    const stored = await getDataRow(db, rowId)
+    const stored = await getDataRow(db, MAIN_SCOPE, rowId)
     expect(stored!.slug).toBe('basics')
   })
 
@@ -250,7 +252,7 @@ describe('data_update_row', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/not found/)
-    const stored = await getDataRow(db, rowId)
+    const stored = await getDataRow(db, MAIN_SCOPE, rowId)
     expect(stored!.cells.price).toBe(100)
   })
 

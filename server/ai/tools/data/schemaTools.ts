@@ -156,7 +156,7 @@ const listTablesTool: AiTool = {
   handler: async (input, ctx: ToolContext) => {
     const { kind } = input as Static<typeof ListTablesInput>
     const actor = toolActor(ctx)
-    const tables = await listDataTablesWithCounts(ctx.db)
+    const tables = await listDataTablesWithCounts(ctx.db, ctx.branch)
 
     // Per-family visibility, exactly as `GET /admin/api/cms/data/tables`
     // filters it: a custom-only caller never learns the system tables exist,
@@ -227,7 +227,7 @@ function createTableTool(runtime?: DataToolsRuntime): AiTool {
       // The partial unique index on active slugs would otherwise surface as an
       // opaque driver error, leaving the caller unable to tell a duplicate
       // from a bug. Same reasoning as the row-slug pre-check in the HTTP route.
-      const clash = await getDataTableBySlug(ctx.db, slug)
+      const clash = await getDataTableBySlug(ctx.db, ctx.branch, slug)
       if (clash) {
         return {
           ok: false,
@@ -235,7 +235,7 @@ function createTableTool(runtime?: DataToolsRuntime): AiTool {
         }
       }
 
-      const table = await createDataTable(ctx.db, {
+      const table = await createDataTable(ctx.db, ctx.branch, {
         name,
         slug,
         kind,
@@ -286,7 +286,7 @@ function updateTableTool(runtime?: DataToolsRuntime): AiTool {
       if ('error' in resolved) return resolved
       const { table } = resolved
 
-      const update: Parameters<typeof updateDataTable>[2] = { updatedByUserId: ctx.userId }
+      const update: Parameters<typeof updateDataTable>[3] = { updatedByUserId: ctx.userId }
       if (args.name !== undefined) update.name = args.name.trim()
       if (args.slug !== undefined) update.slug = slugFromTitle(args.slug.trim())
       if (args.routeBase !== undefined) update.routeBase = args.routeBase
@@ -303,7 +303,7 @@ function updateTableTool(runtime?: DataToolsRuntime): AiTool {
       // A rename must not collide with another active slug, for the same
       // reason creation checks it: the unique index throws opaquely otherwise.
       if (update.slug && update.slug !== table.slug) {
-        const clash = await getDataTableBySlug(ctx.db, update.slug)
+        const clash = await getDataTableBySlug(ctx.db, ctx.branch, update.slug)
         if (clash) {
           return { ok: false, error: `A table with slug "${update.slug}" already exists (id ${clash.id}).` }
         }
@@ -312,7 +312,7 @@ function updateTableTool(runtime?: DataToolsRuntime): AiTool {
       const rejection = validateTableUpdate(table, update)
       if (rejection) return { ok: false, error: rejection }
 
-      const updated = await updateDataTable(ctx.db, table.id, update)
+      const updated = await updateDataTable(ctx.db, ctx.branch, table.id, update)
       if (!updated) return { ok: false, error: `Table ${args.tableId} not found.` }
 
       await recordTableAudit(ctx, runtime, 'data.table.update', updated.id, updated.slug)
@@ -365,7 +365,7 @@ function addFieldsTool(runtime?: DataToolsRuntime): AiTool {
       const rejection = validateTableUpdate(table, { fields })
       if (rejection) return { ok: false, error: rejection }
 
-      const updated = await updateDataTable(ctx.db, table.id, {
+      const updated = await updateDataTable(ctx.db, ctx.branch, table.id, {
         fields,
         updatedByUserId: ctx.userId,
       })
@@ -395,7 +395,7 @@ async function resolveManageableTable(
   ctx: ToolContext,
   tableId: string,
 ): Promise<{ table: DataTable } | { ok: false; error: string }> {
-  const table = await getDataTable(ctx.db, tableId)
+  const table = await getDataTable(ctx.db, ctx.branch, tableId)
   if (!table || !canManageTable(toolActor(ctx), table)) {
     return { ok: false, error: `Table ${tableId} not found.` }
   }

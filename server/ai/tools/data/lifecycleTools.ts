@@ -92,7 +92,7 @@ function setRowsStatusTool(runtime?: DataToolsRuntime): AiTool {
       const failed: RowFailure[] = []
 
       for (const rowId of args.rowIds) {
-        const current = await getDataRow(ctx.db, rowId)
+        const current = await getDataRow(ctx.db, ctx.branch, rowId)
         // Publishing and retracting are separate permissions on the HTTP
         // surface, so the per-row check has to follow the requested status
         // rather than the tool's coarse capability gate.
@@ -112,7 +112,7 @@ function setRowsStatusTool(runtime?: DataToolsRuntime): AiTool {
             failed.push({ rowId, error: `Row ${rowId} not found.` })
             continue
           }
-          await emitContentEntryUpdated(ctx.db, row.id, ['status'], {
+          await emitContentEntryUpdated(ctx.db, ctx.branch, row.id, ['status'], {
             kind: 'user',
             userId: ctx.userId,
           })
@@ -145,7 +145,7 @@ async function retractRow(
   rowId: string,
   status: 'draft' | 'unpublished',
 ): Promise<DataRow | null> {
-  const row = await updateDataRowStatus(ctx.db, rowId, status, ctx.userId)
+  const row = await updateDataRowStatus(ctx.db, ctx.branch, rowId, status, ctx.userId)
   if (!row) return null
   if (runtime?.uploadsDir) {
     await removeDataRowArtefact(ctx.db, runtime.uploadsDir, rowId, row.slug).catch((err) => {
@@ -180,7 +180,7 @@ function deleteRowsTool(runtime?: DataToolsRuntime): AiTool {
       const failed: RowFailure[] = []
 
       for (const rowId of args.rowIds) {
-        const row = await getDataRow(ctx.db, rowId)
+        const row = await getDataRow(ctx.db, ctx.branch, rowId)
         if (!row || !canEditDataRow(toolActor(ctx), row)) {
           failed.push({ rowId, error: `Row ${rowId} not found.` })
           continue
@@ -192,6 +192,7 @@ function deleteRowsTool(runtime?: DataToolsRuntime): AiTool {
 
       const result = await softDeleteDataRowMany(
         ctx.db,
+        ctx.branch,
         deletable.map((row) => row.id),
         ctx.userId,
       )
@@ -205,7 +206,7 @@ function deleteRowsTool(runtime?: DataToolsRuntime): AiTool {
             console.error('[ai:data] failed to remove artefact for deleted row', row.id, err)
           })
         }
-        await emitContentEntryDeleted(ctx.db, row.id, { kind: 'user', userId: ctx.userId })
+        await emitContentEntryDeleted(ctx.db, ctx.branch, row.id, { kind: 'user', userId: ctx.userId })
         await recordRowAudit(ctx, runtime, 'data.row.delete', row)
       }
       if (result.publishedDeleted > 0) await bumpPublishVersionSerialized()
