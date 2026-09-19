@@ -194,6 +194,8 @@ Schema writes are granted separately from row writes: `data.custom.tables.manage
 
 Reading rows back is `content_list_documents` and `content_get_document`: both accept a reusable data table's id exactly as they accept a post type's, and `content_get_collection_schema` returns the field ids that `data_create_rows` keys its cells by. There is deliberately no `data_list_rows` / `data_get_row` duplicating them; the three descriptions point at each other so an agent finds the path from either side.
 
+Headless calls always run on `main`. The MCP request context pins `MAIN_SCOPE`, so a connector reads and writes the live site's rows and never a site branch's; only the in-app Data chat carries the workspace's branch through the same tools. `data_set_rows_status` refuses a publish off main for the same reason the HTTP route answers 409 — publishing writes main regardless of the branch the row was read from — while retracting and deleting work on a branch and leave main's baked artefact and render cache alone.
+
 Publishing a row in a table with no route base is allowed and normal. No static artefact is baked because there is no route to bake it at, but the row becomes `published`, which is what an `<instatic-loop>` on some other page reads.
 
 The system tables (`pages`, `posts`, `components`, `layouts`) accept new custom fields but refuse any change to their identity or their built-in fields, enforced by the same `assertSystemTableUpdateAllowed` the HTTP route uses.

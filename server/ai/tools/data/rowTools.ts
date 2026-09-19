@@ -241,7 +241,7 @@ async function recordRowAudit(
     action,
     targetType: 'data_row',
     targetId: row.id,
-    metadata: runtime
+    metadata: runtime?.connectorId
       ? { tableId: row.tableId, slug: row.slug, source: 'mcp', connectorId: runtime.connectorId }
       : { tableId: row.tableId, slug: row.slug, source: 'agent' },
   })

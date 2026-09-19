@@ -211,7 +211,7 @@ Both actions are opened from `DataSidebar`.
 
 ## Agent and MCP access
 
-Everything this workspace does by hand is also reachable headlessly, through the `data` tool scope (`server/ai/tools/data/`): `data_list_tables`, `data_create_table`, `data_update_table`, `data_add_fields`, `data_create_rows`, `data_update_row`, `data_set_rows_status`, `data_delete_rows`. An MCP connection gets the same tools with a runtime attached, so its writes are attributed to the connection in the audit log.
+Everything this workspace does by hand is also reachable headlessly, through the `data` tool scope (`server/ai/tools/data/`): `data_list_tables`, `data_create_table`, `data_update_table`, `data_add_fields`, `data_create_rows`, `data_update_row`, `data_set_rows_status`, `data_delete_rows`. Both paths pass a runtime carrying the uploads directory, so publishing bakes a row's static artefact and retracting or deleting unlinks it again; an MCP connection also passes its connector id, which is what attributes its writes to the connection in the audit log instead of to the signed-in user. A headless call runs on `main` (the MCP context pins it); the in-app chat carries the workspace's branch, and publishing is refused off main.
 
 Those handlers reuse this workspace's server side rather than restating it — the same repository calls, the same `slugForTable` derivation, the same `content.entry.cells` plugin filter, and the same access predicates from `server/handlers/cms/data/access.ts`. Keep it that way: a second copy of a rule is a copy free to drift. When a rule changes here, it changes for the tools in the same edit.
 

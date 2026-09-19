@@ -285,10 +285,19 @@ export const SiteListModulesOutputSchema = Type.Object({
   })),
 })
 
+/**
+ * One digest per family, not a flat list: `filterTokenFamily` keeps the shape
+ * stable and empties the families the caller did not ask for. Each entry
+ * carries its CSS variable and the utility class(es) bound to it; the entry
+ * shape itself belongs to the framework token describer.
+ */
 export const SiteListTokensOutputSchema = Type.Object({
-  tokens: Type.Array(Type.Unknown({
-    description: 'A design token with its CSS variable and the utility class(es) bound to it.',
-  })),
+  tokens: Type.Object({
+    colors: Type.Array(Type.Unknown()),
+    typography: Type.Array(Type.Unknown({ description: 'Scale groups, each with its steps.' })),
+    spacing: Type.Array(Type.Unknown({ description: 'Scale groups, each with its steps.' })),
+    fonts: Type.Array(Type.Unknown()),
+  }, { additionalProperties: true }),
 })
 
 export const SiteListPostTypesOutputSchema = Type.Object({
@@ -431,7 +440,7 @@ export const SiteDuplicateNodeOutputSchema = Type.Object({
 
 export const SiteListCodeAssetsOutputSchema = Type.Object({
   assets: Type.Array(Type.Object({
-    id: Type.String(),
+    fileId: Type.String({ description: 'The id site_read_code_asset and site_patch_code_asset take.' }),
     path: Type.String(),
     type: Type.String(),
   }, { additionalProperties: true })),
@@ -453,7 +462,7 @@ export const SiteReadCodeAssetOutputSchema = Type.Object({
 })
 
 export const SiteWriteCodeAssetOutputSchema = Type.Object({
-  id: Type.String(),
+  fileId: Type.String({ description: 'The id site_read_code_asset and site_patch_code_asset take.' }),
   path: Type.String(),
   action: Type.Optional(Type.String({ description: "'created' or 'updated'." })),
   replacements: Type.Optional(Type.Integer({ description: 'Patch only: how many matches were replaced.' })),

@@ -445,7 +445,7 @@ async function recordTableAudit(
     action,
     targetType: 'data_table',
     targetId: tableId,
-    metadata: runtime
+    metadata: runtime?.connectorId
       ? { slug, source: 'mcp', connectorId: runtime.connectorId }
       : { slug, source: 'agent' },
   })

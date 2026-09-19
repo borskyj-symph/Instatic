@@ -28,7 +28,17 @@ import { contentTools } from './content'
 import { tableScopedReadTools } from './content/readTools'
 import { dataTools } from './data'
 
-function scopeToolset(scope: ToolScope): AiTool[] {
+/**
+ * Per-request context the toolset needs from the server runtime. `uploadsDir`
+ * is what lets a data row's baked artefact be written and unlinked — without
+ * it a retract or delete from the in-app Data chat would leave the published
+ * HTML on disk, still served by Layer A.
+ */
+export interface ToolsetOptions {
+  uploadsDir?: string
+}
+
+function scopeToolset(scope: ToolScope, options: ToolsetOptions = {}): AiTool[] {
   switch (scope) {
     case 'site':
       return siteTools
@@ -36,8 +46,10 @@ function scopeToolset(scope: ToolScope): AiTool[] {
       return contentTools
     case 'data':
       // Schema + row tools, all server-resolved. The MCP registry builds its
-      // own copy with a runtime (see server/ai/mcp/registry.ts); the in-app
-      // agent gets the runtime-free subset.
+      // own copy with a connector-attributed runtime (see
+      // server/ai/mcp/registry.ts); the in-app agent gets the same tools with
+      // an uploads dir but no connector id, so its writes audit as
+      // `source: 'agent'`.
       //
       // `dataTools()` writes rows but cannot read one back, so the three
       // table-scoped content reads come along — they resolve a reusable data
@@ -45,7 +57,7 @@ function scopeToolset(scope: ToolScope): AiTool[] {
       // in the Data workspace could create a table and fill it, then have no
       // way to see what it wrote.
       return [
-        ...dataTools(),
+        ...dataTools(options.uploadsDir ? { uploadsDir: options.uploadsDir } : undefined),
         ...tableScopedReadTools.map((t) => ({ ...t, mutates: false })),
       ]
     case 'plugin':
@@ -71,6 +83,7 @@ function scopeToolset(scope: ToolScope): AiTool[] {
 export function selectToolsForScope(
   scope: ToolScope,
   capabilities: readonly CoreCapability[],
+  options: ToolsetOptions = {},
 ): AiTool[] {
-  return scopeToolset(scope).filter((t) => toolAllowedForCapabilities(t, capabilities))
+  return scopeToolset(scope, options).filter((t) => toolAllowedForCapabilities(t, capabilities))
 }

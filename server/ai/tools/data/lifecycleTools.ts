@@ -32,6 +32,7 @@ import { publishDataRow, removeDataRowArtefact } from '../../../publish/publishR
 import { bumpPublishVersionSerialized } from '../../../publish/publishState'
 import { emitContentEntryDeleted, emitContentEntryUpdated } from '../../../publish/contentEvents'
 import { canEditDataRow, canPublishDataRow } from '../../../handlers/cms/data/access'
+import { isMainScope } from '../../../branches/scope'
 import { toolActor } from './access'
 import type { DataToolsRuntime } from './runtime'
 
@@ -51,6 +52,15 @@ const ROW_LIFECYCLE_CAPS: CoreCapability[] = [
 const ROW_DELETE_CAPS: CoreCapability[] = ['content.edit.own', 'content.edit.any', 'content.manage']
 
 const MAX_ROWS_PER_CALL = 200
+
+/**
+ * Mirrors `branchOnlyResponse` in `server/handlers/cms/data/rows.ts` (409):
+ * publishing exists on main only, and a branch reaches the live site by being
+ * merged. Off main the row is read at `ctx.branch` but `persistDataRowPublish`
+ * writes `MAIN_SCOPE`, so without this gate the call would authorize one row
+ * and publish a different one.
+ */
+const BRANCH_PUBLISH_ERROR = 'Publishing is only available on main. Merge this branch first.'
 
 const RowIds = Type.Array(Type.String({ minLength: 1 }), {
   minItems: 1,
@@ -88,6 +98,13 @@ function setRowsStatusTool(runtime?: DataToolsRuntime): AiTool {
     outputSchema: DataSetRowsStatusOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof SetRowsStatusInput>
+      // Scope is a property of the request, not of a row, so an off-main
+      // publish refuses the whole call instead of failing every row.
+      // `draft` / `unpublished` stay available: they write through
+      // `ctx.branch` and touch nothing on main.
+      if (args.status === 'published' && !isMainScope(ctx.branch)) {
+        return { ok: false, error: BRANCH_PUBLISH_ERROR }
+      }
       const updated: Array<{ id: string; slug: string; status: DataRowStatus }> = []
       const failed: RowFailure[] = []
 
@@ -147,7 +164,10 @@ async function retractRow(
 ): Promise<DataRow | null> {
   const row = await updateDataRowStatus(ctx.db, ctx.branch, rowId, status, ctx.userId)
   if (!row) return null
-  if (runtime?.uploadsDir) {
+  // Only main is served. `removeDataRowArtefact` resolves the route by row id
+  // with no branch filter, so retracting a branch row whose slug matches
+  // main's would unlink main's live page (same guard as the HTTP delete).
+  if (runtime?.uploadsDir && isMainScope(ctx.branch)) {
     await removeDataRowArtefact(ctx.db, runtime.uploadsDir, rowId, row.slug).catch((err) => {
       console.error('[ai:data] failed to remove artefact for retracted row', rowId, err)
     })
@@ -199,9 +219,11 @@ function deleteRowsTool(runtime?: DataToolsRuntime): AiTool {
 
       // The artefact prune and the cache bump both run after the transaction
       // commits: the bump serializes on the publish lock, which must never be
-      // taken from inside a write transaction.
+      // taken from inside a write transaction. Both are main-only — a branch
+      // row never had an artefact or a cached route (same guards as the HTTP
+      // delete handler).
       for (const row of deletable) {
-        if (runtime?.uploadsDir) {
+        if (runtime?.uploadsDir && isMainScope(ctx.branch)) {
           await removeDataRowArtefact(ctx.db, runtime.uploadsDir, row.id, row.slug).catch((err) => {
             console.error('[ai:data] failed to remove artefact for deleted row', row.id, err)
           })
@@ -209,7 +231,9 @@ function deleteRowsTool(runtime?: DataToolsRuntime): AiTool {
         await emitContentEntryDeleted(ctx.db, ctx.branch, row.id, { kind: 'user', userId: ctx.userId })
         await recordRowAudit(ctx, runtime, 'data.row.delete', row)
       }
-      if (result.publishedDeleted > 0) await bumpPublishVersionSerialized()
+      if (result.publishedDeleted > 0 && isMainScope(ctx.branch)) {
+        await bumpPublishVersionSerialized()
+      }
 
       return { deleted: deletable.map((row) => ({ id: row.id, slug: row.slug })), failed }
     },
@@ -236,7 +260,9 @@ async function recordRowAudit(
       tableId: row.tableId,
       slug: row.slug,
       ...extra,
-      ...(runtime ? { source: 'mcp', connectorId: runtime.connectorId } : { source: 'agent' }),
+      ...(runtime?.connectorId
+        ? { source: 'mcp', connectorId: runtime.connectorId }
+        : { source: 'agent' }),
     },
   })
 }

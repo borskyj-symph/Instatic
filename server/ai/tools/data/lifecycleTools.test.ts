@@ -7,16 +7,24 @@
  * table — would not work. The rest guards the partial-failure contract, which
  * differs from the all-or-nothing contract of `data_create_rows`.
  */
-import { beforeEach, describe, expect, it } from 'bun:test'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { CoreCapability } from '@core/capabilities'
+import { physicalId } from '@core/branches'
 import type { DbClient } from '../../../db/client'
 import { createSqliteClient } from '../../../db/sqlite'
 import { sqliteMigrations } from '../../../db/migrations-sqlite'
 import { runMigrations } from '../../../db/runMigrations'
 import { listAuditEvents } from '../../../repositories/audit'
 import { getDataRow, listDataRows } from '../../../repositories/data'
-import { MAIN_SCOPE } from '../../../branches/scope'
+import { MAIN_SCOPE, type BranchScope } from '../../../branches/scope'
+import { forkBranch } from '../../../branches/fork'
+import { getPublishVersion } from '../../../publish/publishState'
 import type { AiTool, ToolContext } from '../../runtime/types'
+import { selectToolsForScope } from '../index'
 import { dataTools } from './index'
 
 const FULL_CAPS: CoreCapability[] = [
@@ -26,6 +34,11 @@ const FULL_CAPS: CoreCapability[] = [
   'data.custom.tables.read',
   'data.custom.tables.manage',
 ]
+
+/** What the in-app chat handler holds when it builds the data toolset. */
+const CHAT_CAPS: CoreCapability[] = ['ai.chat', 'ai.tools.write', ...FULL_CAPS]
+
+const BRANCH_SCOPE: BranchScope = { branchId: 'feature-1' }
 
 /** May write and retract rows, but never publish one. */
 const NO_PUBLISH_CAPS: CoreCapability[] = [
@@ -57,10 +70,12 @@ function run(
   input: Record<string, unknown>,
   db: DbClient,
   capabilities: CoreCapability[] = FULL_CAPS,
+  branch: BranchScope = MAIN_SCOPE,
+  tool: AiTool = toolByName(name),
 ): Promise<unknown> {
   const ctx: ToolContext = {
     db,
-    branch: MAIN_SCOPE,
+    branch,
     userId: 'user-1',
     capabilities,
     scope: 'data',
@@ -68,7 +83,19 @@ function run(
     snapshot: null,
     signal: new AbortController().signal,
   }
-  return toolByName(name).handler!(input, ctx)
+  return tool.handler!(input, ctx)
+}
+
+/**
+ * The toolset the in-app Data chat gets — built the way the chat handler
+ * builds it, so these cases fail if the uploads dir stops being threaded
+ * through and the artefact writes go silently dead again.
+ */
+function chatTool(name: string, uploadsDir: string): AiTool {
+  const tool = selectToolsForScope('data', CHAT_CAPS, { uploadsDir })
+    .find((candidate) => candidate.name === name)
+  if (!tool) throw new Error(`tool ${name} is not offered to the in-app data chat`)
+  return tool
 }
 
 interface Seeded {
@@ -77,7 +104,11 @@ interface Seeded {
 }
 
 /** A `kind: 'data'` table — no route base, which is the case under test. */
-async function seedTrainings(db: DbClient, count = 2): Promise<Seeded> {
+async function seedTrainings(
+  db: DbClient,
+  count = 2,
+  branch: BranchScope = MAIN_SCOPE,
+): Promise<Seeded> {
   const created = await run('data_create_table', {
     name: 'Trainings',
     fields: [
@@ -85,7 +116,7 @@ async function seedTrainings(db: DbClient, count = 2): Promise<Seeded> {
       { id: 'slug', label: 'Slug', type: 'text' },
     ],
     primaryFieldId: 'name',
-  }, db) as { table: { id: string; routeBase: string } }
+  }, db, FULL_CAPS, branch) as { table: { id: string; routeBase: string } }
   expect(created.table.routeBase).toBe('')
 
   const rows = await run('data_create_rows', {
@@ -93,7 +124,7 @@ async function seedTrainings(db: DbClient, count = 2): Promise<Seeded> {
     rows: Array.from({ length: count }, (_, i) => ({
       cells: { name: `Training ${i}`, slug: `training-${i}` },
     })),
-  }, db) as { rows: Array<{ id: string }> }
+  }, db, FULL_CAPS, branch) as { rows: Array<{ id: string }> }
 
   return { tableId: created.table.id, rowIds: rows.rows.map((row) => row.id) }
 }
@@ -217,5 +248,136 @@ describe('data_delete_rows', () => {
     expect(result.deleted).toHaveLength(0)
     expect(result.failed).toHaveLength(2)
     expect(await listDataRows(db, MAIN_SCOPE, seeded.tableId)).toHaveLength(3)
+  })
+})
+
+/**
+ * Publishing exists on main only: the tool reads and authorizes the row at
+ * `ctx.branch`, but `persistDataRowPublish` reads and writes `MAIN_SCOPE`, so
+ * an off-main publish would check one row and ship another.
+ *
+ * Retraction and deletion stay available on a branch — they write through
+ * `ctx.branch` — but must not touch main's baked artefact or its render
+ * cache. The branch here is a real fork, which is what makes that dangerous:
+ * every row keeps main's logical id and slug, and `removeDataRowArtefact`
+ * resolves the route by row id with NO branch filter, so an unguarded branch
+ * retraction unlinks main's live page.
+ */
+describe('branch scope', () => {
+  let db: DbClient
+  let seeded: Seeded
+  let uploadsDir: string
+
+  /** Where a row in a table with no route base bakes: `/<slug>` -> `<slug>.html`. */
+  function artefactPath(slug: string): string {
+    return join(uploadsDir, 'published', 'a', `${slug}.html`)
+  }
+
+  async function seedArtefact(slug: string): Promise<string> {
+    const path = artefactPath(slug)
+    await mkdir(join(uploadsDir, 'published', 'a'), { recursive: true })
+    await writeFile(path, '<html>live</html>', 'utf-8')
+    return path
+  }
+
+  /** `updateDataRowStatus` only moves a row down, and a branch publish is refused. */
+  async function forcePublished(rowId: string, branch: BranchScope): Promise<void> {
+    await db`
+      update data_rows set status = 'published'
+      where id = ${physicalId(branch.branchId, rowId)}
+    `
+  }
+
+  beforeEach(async () => {
+    db = await freshDb()
+    seeded = await seedTrainings(db)
+    uploadsDir = await mkdtemp(join(tmpdir(), 'instatic-lifecycle-'))
+    await run('data_set_rows_status', { rowIds: [seeded.rowIds[0]], status: 'published' }, db)
+    await forkBranch(db, {
+      id: BRANCH_SCOPE.branchId,
+      name: 'Feature',
+      fromBranchId: MAIN_SCOPE.branchId,
+      createdByUserId: 'user-1',
+    })
+  })
+
+  afterEach(async () => {
+    await rm(uploadsDir, { recursive: true, force: true })
+  })
+
+  it('refuses a publish from a branch instead of publishing the row on main', async () => {
+    const result = await run('data_set_rows_status', {
+      rowIds: [seeded.rowIds[1]],
+      status: 'published',
+    }, db, FULL_CAPS, BRANCH_SCOPE) as { ok: boolean; error: string }
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/only available on main/)
+    expect((await getDataRow(db, BRANCH_SCOPE, seeded.rowIds[1]))!.status).toBe('draft')
+    // The row the write would have landed on.
+    expect((await getDataRow(db, MAIN_SCOPE, seeded.rowIds[1]))!.status).toBe('draft')
+  })
+
+  it('still retracts on a branch, and only on the branch', async () => {
+    const result = await run('data_set_rows_status', {
+      rowIds: [seeded.rowIds[0]],
+      status: 'unpublished',
+    }, db, FULL_CAPS, BRANCH_SCOPE) as { updated: Array<{ status: string }>; failed: unknown[] }
+
+    expect(result.failed).toHaveLength(0)
+    expect(result.updated[0].status).toBe('unpublished')
+    expect((await getDataRow(db, MAIN_SCOPE, seeded.rowIds[0]))!.status).toBe('published')
+  })
+
+  it('leaves the live artefact in place when the branch copy is retracted', async () => {
+    const path = await seedArtefact('training-0')
+
+    await run('data_set_rows_status', {
+      rowIds: [seeded.rowIds[0]],
+      status: 'unpublished',
+    }, db, CHAT_CAPS, BRANCH_SCOPE, chatTool('data_set_rows_status', uploadsDir))
+
+    expect(existsSync(path)).toBe(true)
+  })
+
+  it('removes the artefact when the same retraction runs on main', async () => {
+    const path = await seedArtefact('training-0')
+
+    await run('data_set_rows_status', {
+      rowIds: [seeded.rowIds[0]],
+      status: 'unpublished',
+    }, db, CHAT_CAPS, MAIN_SCOPE, chatTool('data_set_rows_status', uploadsDir))
+
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('deleting the branch copy touches neither the artefact nor the publish version', async () => {
+    const path = await seedArtefact('training-0')
+    await forcePublished(seeded.rowIds[0], BRANCH_SCOPE)
+    const versionBefore = getPublishVersion()
+
+    const result = await run('data_delete_rows', {
+      rowIds: [seeded.rowIds[0]],
+    }, db, CHAT_CAPS, BRANCH_SCOPE, chatTool('data_delete_rows', uploadsDir)) as {
+      deleted: unknown[]
+    }
+
+    expect(result.deleted).toHaveLength(1)
+    expect(existsSync(path)).toBe(true)
+    expect(getPublishVersion()).toBe(versionBefore)
+    // Main's row is untouched by the branch delete.
+    expect((await getDataRow(db, MAIN_SCOPE, seeded.rowIds[0]))!.status).toBe('published')
+  })
+
+  it('deleting the published row on main removes the artefact and bumps the version', async () => {
+    const path = await seedArtefact('training-0')
+    const versionBefore = getPublishVersion()
+
+    await run('data_delete_rows', {
+      rowIds: [seeded.rowIds[0]],
+    }, db, CHAT_CAPS, MAIN_SCOPE, chatTool('data_delete_rows', uploadsDir))
+
+    expect(existsSync(path)).toBe(false)
+    expect(getPublishVersion()).toBeGreaterThan(versionBefore)
   })
 })

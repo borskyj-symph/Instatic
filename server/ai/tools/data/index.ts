@@ -7,8 +7,10 @@
  * bridge. See `schemaTools.ts` for the full reasoning and the step-up caveat.
  *
  * A factory, not a constant, because the row tools need per-connection context
- * (`DataToolsRuntime`) the MCP server owns. Call it with no argument for the
- * in-app agent path.
+ * (`DataToolsRuntime`): the uploads directory both callers supply, plus the
+ * connector id only the MCP server has. Calling it with no argument leaves the
+ * artefact writes off, which is correct only where nothing is ever published —
+ * both live callers pass an uploads dir.
  */
 
 import type { AiTool } from '../types'
