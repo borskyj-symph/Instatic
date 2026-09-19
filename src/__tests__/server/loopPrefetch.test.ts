@@ -10,6 +10,7 @@ import {
   publishedDataRowToLoopItem,
   readLoopProps,
 } from '../../../server/publish/loopPrefetch'
+import { renderPublishedSnapshot } from '../../../server/publish/publicRenderer'
 import type { DbResult } from '../../../server/db'
 import { createFakeDb } from './dbTestFake'
 import { makePage, makeSite } from '../publisher/helpers'
@@ -201,14 +202,14 @@ describe('loopPrefetch', () => {
   // An entry template is one page shared by every row, so the only way its
   // loops can filter per row is to read the row being rendered.
   describe('tokenized cell filters', () => {
-    function pageWithFilter(cellValue: string) {
+    function pageWithFilter(cellValue: string, cellOperator = 'is') {
       return makePage({
         root: { moduleId: 'base.body', children: ['loop'] },
         loop: {
           moduleId: 'base.loop',
           props: {
             sourceId: 'data.rows',
-            filters: { tableId: 'terms', cellField: 'course', cellOperator: 'is', cellValue },
+            filters: { tableId: 'terms', cellField: 'course', cellOperator, cellValue },
             orderBy: 'publishedAt',
             direction: 'desc',
             limit: 5,
@@ -269,6 +270,95 @@ describe('loopPrefetch', () => {
       await prefetchLoopData(pageWithFilter('Time Management (CZ)'), makeSite(), db)
 
       expect(params.some((args) => args.includes('Time Management (CZ)'))).toBe(true)
+    })
+
+    it('renders nothing when only PART of the value resolved', async () => {
+      // "course-{currentEntry.missing}" resolves to "course-" — not blank, so
+      // a blankness check waves it through. With `isNot` that matches nearly
+      // every row in the table: the exact spill the guard exists to stop.
+      let queried = false
+      const db = createFakeDb(async (): Promise<DbResult> => {
+        queried = true
+        return { rows: [], rowCount: 0 }
+      })
+
+      const result = await prefetchLoopData(
+        pageWithFilter('course-{currentEntry.missing}', 'isNot'),
+        makeSite(),
+        db,
+        undefined,
+        { templateContext: entryContext },
+      )
+
+      expect(result.get('loop')?.items).toEqual([])
+      expect(queried).toBe(false)
+    })
+
+    it('treats a fired |fallback as resolved and queries with it', async () => {
+      const params: unknown[][] = []
+      const db = createFakeDb(async (sql, args): Promise<DbResult> => {
+        params.push(args ?? [])
+        if (sql.includes('from data_tables')) return { rows: [{ kind: 'data', fields_json: [] }], rowCount: 1 }
+        if (sql.includes('count(*)')) return { rows: [{ total: 0 }], rowCount: 1 }
+        return { rows: [], rowCount: 0 }
+      })
+
+      await prefetchLoopData(
+        pageWithFilter('{currentEntry.missing|all-courses}'),
+        makeSite(),
+        db,
+        undefined,
+        { templateContext: entryContext },
+      )
+
+      expect(params.some((args) => args.includes('all-courses'))).toBe(true)
+    })
+
+    it('still queries when the operator ignores the value', async () => {
+      // `isSet` never reads cellValue, so an unresolvable token in it is not a
+      // reason to empty a loop filtering on a field the query does look at.
+      const params: unknown[][] = []
+      const db = createFakeDb(async (sql, args): Promise<DbResult> => {
+        params.push(args ?? [])
+        if (sql.includes('from data_tables')) return { rows: [{ kind: 'data', fields_json: [] }], rowCount: 1 }
+        if (sql.includes('count(*)')) return { rows: [{ total: 0 }], rowCount: 1 }
+        return { rows: [], rowCount: 0 }
+      })
+
+      await prefetchLoopData(
+        pageWithFilter('{currentEntry.missing}', 'isSet'),
+        makeSite(),
+        db,
+        undefined,
+        { templateContext: entryContext },
+      )
+
+      expect(params.some((args) => args.includes('course'))).toBe(true)
+    })
+
+    it('resolves {site.name} on the public render path', async () => {
+      // The page and site frames are filled inside `publishPage`, which runs
+      // AFTER the loop prefetch — so the public renderer has to build them
+      // itself for the prefetch or every `{page.*}` / `{site.*}` filter
+      // resolves blank and the loop renders empty.
+      const params: unknown[][] = []
+      const db = createFakeDb(async (sql, args): Promise<DbResult> => {
+        params.push(args ?? [])
+        if (sql.includes('from data_tables')) return { rows: [{ kind: 'data', fields_json: [] }], rowCount: 1 }
+        if (sql.includes('count(*)')) return { rows: [{ total: 0 }], rowCount: 1 }
+        return { rows: [], rowCount: 0 }
+      })
+
+      const page = pageWithFilter('{site.name}')
+      const site = makeSite({ name: 'Symphera', pages: [page] })
+
+      await renderPublishedSnapshot(
+        { cmsSnapshotVersion: 1, pageRowId: page.id, site },
+        { db, url: new URL('http://localhost/index') },
+      )
+
+      expect(params.some((args) => args.includes('Symphera'))).toBe(true)
+      expect(params.some((args) => args.includes('{site.name}'))).toBe(false)
     })
   })
 })

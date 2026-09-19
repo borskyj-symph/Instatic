@@ -21,7 +21,8 @@ import type {
 import { loopSourceRegistry } from '@core/loops/registry'
 import { firstImagePathFromMarkdown } from '@core/markdown/renderMarkdown'
 import { normalizeRouteBase } from '@core/templates/templateMatching'
-import { containsTokens, interpolateTokens } from '@core/templates/tokenInterpolation'
+import { containsTokens, interpolateTokensWithStatus } from '@core/templates/tokenInterpolation'
+import { cellFilterUsesValue } from '@core/loops/cellFilter'
 import type { TemplateRenderDataContext } from '@core/templates/renderDataContext'
 import { publicDataUserFromParts } from '@core/data/publicDataUser'
 import type { PublishedDataRow } from '@core/data/schemas'
@@ -212,7 +213,30 @@ function readPageNumber(url: URL | undefined, loopNodeId: string): number {
 }
 
 /**
- * Filter values an author may write tokens into.
+ * Render context used when a caller passed none. Tokens resolve against empty
+ * frames — which is exactly "nothing in scope", and lets an author's
+ * `|fallback` still fire instead of being short-circuited away.
+ */
+const EMPTY_RENDER_CONTEXT: TemplateRenderDataContext = { entryStack: [] }
+
+interface ResolvedFilters {
+  filters: Record<string, unknown>
+  /**
+   * True when a filter value the query will actually read carried a token that
+   * resolved to nothing. The loop must then render EMPTY, never unfiltered:
+   * `parseCellFilter` reads a blank value as "not configured yet" and lists the
+   * whole table, which on an entry route would spill every other row's data
+   * onto the page.
+   *
+   * Partial resolution counts too. `"course-{currentEntry.missing}"` comes back
+   * as `"course-"` — not blank, so a blankness test would let it through, and
+   * with `isNot` it would match nearly every row in the table.
+   */
+  unresolved: boolean
+}
+
+/**
+ * Resolve tokens in the filter values an author can write them into.
  *
  * A loop's `cellValue` is the only free-text filter input, and on an entry
  * template it is the one value that has to change per rendered row: a course
@@ -221,36 +245,21 @@ function readPageNumber(url: URL | undefined, loopNodeId: string): number {
  * render path funnels through before a source fetches — keeps the sources and
  * the SQL builder unaware that tokens exist.
  */
-const TOKENIZED_FILTER_KEYS = ['cellValue'] as const
-
-interface ResolvedFilters {
-  filters: Record<string, unknown>
-  /**
-   * True when a filter carried tokens that resolved to nothing. The loop must
-   * then render EMPTY, never unfiltered: `parseCellFilter` reads a blank value
-   * as "not configured yet" and lists the whole table, which on an entry route
-   * would spill every other row's data onto the page.
-   */
-  unresolved: boolean
-}
-
 function resolveFilterTokens(
   filters: Record<string, unknown>,
   context: TemplateRenderDataContext | undefined,
 ): ResolvedFilters {
-  let next: Record<string, unknown> | null = null
-  let unresolved = false
-
-  for (const key of TOKENIZED_FILTER_KEYS) {
-    const value = filters[key]
-    if (typeof value !== 'string' || !containsTokens(value)) continue
-    const resolved = context ? interpolateTokens(value, context) : ''
-    if (!resolved.trim()) unresolved = true
-    next ??= { ...filters }
-    next[key] = resolved
+  const value = filters.cellValue
+  if (typeof value !== 'string' || !containsTokens(value)) {
+    return { filters, unresolved: false }
   }
-
-  return { filters: next ?? filters, unresolved }
+  const { text, unresolved } = interpolateTokensWithStatus(value, context ?? EMPTY_RENDER_CONTEXT)
+  return {
+    filters: { ...filters, cellValue: text },
+    // An operator that ignores the value never reads what failed to resolve,
+    // so switching a filter to `isSet` must not empty the loop.
+    unresolved: unresolved && cellFilterUsesValue(filters.cellOperator),
+  }
 }
 
 /**

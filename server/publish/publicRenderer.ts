@@ -2,7 +2,7 @@ import '../../src/modules/base'
 import '@core/loops/sources'
 import { registry } from '@core/module-engine'
 import { publishPage } from '@core/publisher'
-import { buildRouteFrame } from '@core/templates/contextFrames'
+import { buildPageFrame, buildRouteFrame, buildSiteFrame } from '@core/templates/contextFrames'
 import { buildPublishedSiteCssBundle } from './siteCssBundle'
 import { buildPublishedSiteModuleJsMap } from './moduleJsBundle'
 import { resolveTemplateChain, resolveNotFoundTemplate, composeTemplateChain } from '@core/templates'
@@ -95,7 +95,22 @@ async function renderMergedTemplate(
 ): Promise<{ html: string; jsModuleIds: string[]; publishVersion: number; cssBundle: SiteCssBundle }> {
   const publishVersion = ctx.publishVersion ?? getPublishVersion()
   const moduleJsMap = buildPublishedSiteModuleJsMap(snapshot.site, registry)
-  const loopData = await prefetchLoopData(merged, snapshot.site, ctx.db, ctx.url, { templateContext })
+  // Loop filters resolve their tokens BEFORE `publishPage` runs, so they cannot
+  // wait for the page/site frames `publishPage` fills in itself — a
+  // `{page.title}` filter would resolve to nothing and empty the loop. Build
+  // those two frames here for the prefetch only, mirroring what `publishPage`
+  // will compute, and leave the context handed to `publishPage` untouched: it
+  // derives its own route fallback from the page permalink when `ctx.url` is
+  // absent, and that resolution stays its business.
+  const prefetchContext: TemplateRenderDataContext = {
+    entryStack: templateContext?.entryStack ?? [],
+    page: buildPageFrame(merged),
+    site: buildSiteFrame(snapshot.site),
+    ...(templateContext?.route ? { route: templateContext.route } : {}),
+  }
+  const loopData = await prefetchLoopData(merged, snapshot.site, ctx.db, ctx.url, {
+    templateContext: prefetchContext,
+  })
   const mediaAssets = await prefetchMediaAssets(merged, snapshot.site, registry, ctx.db, {
     templateContext,
     loopData,
