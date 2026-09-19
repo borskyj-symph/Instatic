@@ -334,7 +334,10 @@ export const SiteListBreakpointsOutputSchema = Type.Object({
   breakpoints: Type.Array(Type.Object({
     id: Type.String(),
     label: Type.String(),
-    width: Type.Integer(),
+    // `Number`, not `Integer`: the handler returns `site.breakpoints` verbatim
+    // and `BreakpointSchema` types width as a number, so a fractional width is
+    // storable and would fail an integer-shaped advertised schema.
+    width: Type.Number(),
     isBase: Type.Optional(Type.Boolean({ description: 'The base context every other breakpoint cascades from.' })),
   }, { additionalProperties: true })),
 })
