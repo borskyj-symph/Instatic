@@ -19,6 +19,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { CoreCapability } from '@core/capabilities'
 import type { DataRow } from '@core/data/schemas'
 import { slugForTable } from '@core/data/cells'
+import { DataCreateRowsOutputSchema, DataUpdateRowOutputSchema } from '@core/ai'
 import { protectedBuiltInCreateCellKey } from '@core/data/systemTableGuard'
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { createAuditEvent, type AuditAction } from '../../../repositories/audit'
@@ -52,7 +53,7 @@ const ROW_EDIT_CAPS: CoreCapability[] = ['content.edit.own', 'content.edit.any',
 const MAX_ROWS_PER_CALL = 200
 
 const CellsSchema = Type.Record(Type.String(), Type.Unknown(), {
-  description: 'Cell values keyed by field id, as returned by data_list_tables.',
+  description: 'Cell values keyed by field id. Field ids come from content_get_collection_schema.',
 })
 
 // ---------------------------------------------------------------------------
@@ -75,8 +76,9 @@ function createRowsTool(runtime?: DataToolsRuntime): AiTool {
     mutates: true,
     requiredCapabilities: ROW_CREATE_CAPS,
     description:
-      `Create up to ${MAX_ROWS_PER_CALL} rows in one table, in a single transaction — if any row is rejected, none are written. Cells are keyed by field id (call data_list_tables for a table's fields). Rows land as drafts; publish them with data_set_rows_status. Headless — no editor needed.`,
+      `Create up to ${MAX_ROWS_PER_CALL} rows in one table, in a single transaction — if any row is rejected, none are written. Cells are keyed by field id — call content_get_collection_schema with the table id for its field ids. Rows land as drafts; publish them with data_set_rows_status and read them back with content_list_documents. Headless — no editor needed.`,
     inputSchema: CreateRowsInput,
+    outputSchema: DataCreateRowsOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof CreateRowsInput>
       const table = await getDataTable(ctx.db, args.tableId)
@@ -161,6 +163,7 @@ function updateRowTool(runtime?: DataToolsRuntime): AiTool {
     description:
       "Change one row's cells. By default the given cells are merged into what is already stored, so you can set a single field without re-sending the rest; pass merge: false to replace the whole cell set. Editing a published row writes its draft — call data_set_rows_status to publish the change. Headless — no editor needed.",
     inputSchema: UpdateRowInput,
+    outputSchema: DataUpdateRowOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof UpdateRowInput>
       const current = await getDataRow(ctx.db, args.rowId)

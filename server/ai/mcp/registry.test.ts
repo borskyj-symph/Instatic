@@ -133,4 +133,14 @@ describe('mcp registry', () => {
     // Row writes ride content.* capabilities, so they survive.
     expect(noTableManage).toContain('data_create_rows')
   })
+
+  it('advertises an outputSchema for every tool in the catalog', () => {
+    // The MCP surface promises structured output. A tool added without an
+    // `outputSchema` would silently ship `structuredContent` no client can
+    // interpret, so the catalog is the gate rather than each tool file.
+    const missing = mcpToolsForCapabilities(FULL)
+      .filter((t) => t.outputSchema === undefined)
+      .map((t) => t.name)
+    expect(missing).toEqual([])
+  })
 })

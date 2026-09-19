@@ -146,6 +146,25 @@ executeAiTool(...) / live editor bridge
 | `tools/uploadMediaTool.ts` | Server-resolved image upload (`media_upload`) — inline base64 or SSRF-guarded `sourceUrl` download, through the shared media pipeline. |
 | `../tools/data/` | Server-resolved schema and row tools for reusable data tables (`data_*`). Shared with the in-app `data` chat scope; the MCP registry passes a runtime so writes are attributed to the connection. |
 
+## What `tools/list` advertises
+
+Each tool ships three things beyond its name and description.
+
+`inputSchema` is the tool's TypeBox schema emitted verbatim as JSON Schema. The same schema re-validates the arguments inside `executeAiTool`, so the advertised contract and the enforced one cannot drift.
+
+`outputSchema` describes the result. The server sends the payload twice on success: as JSON text in `content`, for clients that read only that, and as `structuredContent`, a typed object matching the schema. Nothing validates a result against its schema at runtime — a shape drift must fail a test, never break a tool on a live install — so the catalog test in `registry.test.ts` requires every advertised tool to declare one and the per-tool tests assert the match. Schemas live in `src/core/ai/toolOutputSchemas.ts`, in core because browser tools produce their results in the browser and the server advertises them. Where a tool forwards a structure another engine owns (a page-node tree, a module's prop schema) the leaf stays `unknown` with a description rather than a second definition to drift from the first.
+
+`annotations` carry the four MCP behaviour hints, derived in `server.ts`:
+
+| Hint | How it is set |
+|---|---|
+| `readOnlyHint` | true unless the tool is tagged `mutates` |
+| `destructiveHint` | true for the row/document/node/page deletes, `data_update_table` (dropping a field orphans its values), and `site_publish` (overwrites the live slot) |
+| `idempotentHint` | true for reads and for writes that land in the same state when repeated — status changes, deletes, field and token setters |
+| `openWorldHint` | always false; every tool reaches this install's own database and uploads, nothing else |
+
+They are hints for a client's confirmation UI, not a security boundary. Capabilities are the boundary.
+
 ## Tool execution model
 
 MCP exposes the full deduplicated tool catalog, filtered by the connection's capabilities.
@@ -170,6 +189,8 @@ They get their own headless toolset instead of being folded into `content_*`, be
 | `data_update_row` | Patches one row's cells (merge by default). | a content edit capability |
 | `data_set_rows_status` | Publishes, unpublishes, or drafts rows in bulk, reporting per-row outcomes. | publish for `published`, edit otherwise |
 | `data_delete_rows` | Soft-deletes rows in bulk. | a content edit capability |
+
+Reading rows back is `content_list_documents` and `content_get_document`: both accept a reusable data table's id exactly as they accept a post type's, and `content_get_collection_schema` returns the field ids that `data_create_rows` keys its cells by. There is deliberately no `data_list_rows` / `data_get_row` duplicating them; the three descriptions point at each other so an agent finds the path from either side.
 
 Publishing a row in a table with no route base is allowed and normal. No static artefact is baked because there is no route to bake it at, but the row becomes `published`, which is what an `<instatic-loop>` on some other page reads.
 

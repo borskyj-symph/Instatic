@@ -32,6 +32,7 @@ import {
 import { normalizeDataTableFields } from '@core/data/fields'
 import { assertSystemTableUpdateAllowed } from '@core/data/systemTableGuard'
 import { slugFromTitle } from '@core/utils/slug'
+import { DataListTablesOutputSchema, DataTableOutputSchema } from '@core/ai'
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { createAuditEvent } from '../../../repositories/audit'
 import {
@@ -149,8 +150,9 @@ const listTablesTool: AiTool = {
   execution: 'server',
   requiredCapabilities: TABLE_READ_CAPS,
   description:
-    "List every table in the workspace: reusable data tables (kind 'data') AND routable post types (kind 'postType'). Pass `kind` to narrow. Returns id, slug, label, kind, routable, system, rowCount, primaryFieldId per table — call content_get_collection_schema with an id for its fields. This is the discovery tool for reusable data tables, which content_list_collections deliberately excludes. Headless — no editor needed.",
+    "List every table in the workspace: reusable data tables (kind 'data') AND routable post types (kind 'postType'). Pass `kind` to narrow. Returns id, slug, label, kind, routable, system, rowCount, primaryFieldId per table — call content_get_collection_schema with an id for its fields, and content_list_documents / content_get_document with the same id to read its rows. This is the discovery tool for reusable data tables, which content_list_collections deliberately excludes. Headless — no editor needed.",
   inputSchema: ListTablesInput,
+  outputSchema: DataListTablesOutputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { kind } = input as Static<typeof ListTablesInput>
     const actor = toolActor(ctx)
@@ -199,6 +201,7 @@ function createTableTool(runtime?: DataToolsRuntime): AiTool {
     description:
       "Create a custom table. `kind` defaults to 'data' (a reusable table with no public URLs — course dates, team members, pricing rows) — use 'postType' only for content that needs one public page per row. `slug` defaults to a slugified `pluralLabel`, `singularLabel`/`pluralLabel` default from `name`, `routeBase` defaults to `/<slug>` for a post type and to none for a data table (pass an explicit `routeBase` only to override that), `primaryFieldId` names the field used as the row label in grids and pickers (defaults to 'title'). Pass `fields` to define the schema up front. Returns the table AS STORED, including the actual field ids — read those back before wiring loops or writing rows, they are not always the ids you sent. Field types 'pageTree' and 'fieldSchema' are reserved for built-in tables. Headless — no editor needed.",
     inputSchema: CreateTableInput,
+    outputSchema: DataTableOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof CreateTableInput>
 
@@ -276,6 +279,7 @@ function updateTableTool(runtime?: DataToolsRuntime): AiTool {
     description:
       "Change an existing table's identity or schema. `fields` REPLACES the whole field array — send every field you want to keep, or use data_add_fields to append without touching the rest. Dropping a field orphans the values already stored under it on every row. Set `routeBase` to an empty string to make a table non-routable, or to a path to give each row a public URL. The seeded system tables (pages, posts, components, layouts) accept custom fields but refuse any change to their identity or their built-in fields. Headless — no editor needed.",
     inputSchema: UpdateTableInput,
+    outputSchema: DataTableOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof UpdateTableInput>
       const resolved = await resolveManageableTable(ctx, args.tableId)
@@ -336,6 +340,7 @@ function addFieldsTool(runtime?: DataToolsRuntime): AiTool {
     description:
       "Append fields to an existing table, leaving every current field and every stored value untouched. This is the safe way to evolve a schema — data_update_table's `fields` replaces the array and drops whatever you omit. A field id the table already has is refused rather than overwritten; change an existing field through data_update_table. Returns the table as stored. Headless — no editor needed.",
     inputSchema: AddFieldsInput,
+    outputSchema: DataTableOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof AddFieldsInput>
       const resolved = await resolveManageableTable(ctx, args.tableId)

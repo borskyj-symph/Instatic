@@ -8,6 +8,7 @@
  * re-sending the row.
  */
 import { beforeEach, describe, expect, it } from 'bun:test'
+import { Value } from '@sinclair/typebox/value'
 import type { CoreCapability } from '@core/capabilities'
 import type { DbClient } from '../../../db/client'
 import { createSqliteClient } from '../../../db/sqlite'
@@ -251,5 +252,25 @@ describe('data_update_row', () => {
     expect(result.error).toMatch(/not found/)
     const stored = await getDataRow(db, rowId)
     expect(stored!.cells.price).toBe(100)
+  })
+
+  it('describes cells by field id and points at the schema and row reads', () => {
+    // The description used to send the agent to data_list_tables for field
+    // ids, which does not return them — every first call guessed wrong.
+    const description = toolByName('data_create_rows').description
+    expect(description).toContain('content_get_collection_schema')
+    expect(description).toContain('content_list_documents')
+    expect(description).not.toContain('data_list_tables for')
+  })
+
+  it('returns payloads matching the advertised outputSchemas', async () => {
+    const created = await run('data_create_rows', {
+      tableId,
+      rows: [{ cells: { name: 'Intro', slug: 'intro', price: 100 } }],
+    }, db)
+    expect(Value.Check(toolByName('data_create_rows').outputSchema!, created)).toBe(true)
+
+    const updated = await run('data_update_row', { rowId, cells: { price: 120 } }, db)
+    expect(Value.Check(toolByName('data_update_row').outputSchema!, updated)).toBe(true)
   })
 })

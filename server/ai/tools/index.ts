@@ -25,6 +25,7 @@ import { toolAllowedForCapabilities } from './capabilityGate'
 import type { AiTool, ToolScope } from './types'
 import { siteTools } from './site'
 import { contentTools } from './content'
+import { tableScopedReadTools } from './content/readTools'
 import { dataTools } from './data'
 
 function scopeToolset(scope: ToolScope): AiTool[] {
@@ -37,7 +38,16 @@ function scopeToolset(scope: ToolScope): AiTool[] {
       // Schema + row tools, all server-resolved. The MCP registry builds its
       // own copy with a runtime (see server/ai/mcp/registry.ts); the in-app
       // agent gets the runtime-free subset.
-      return dataTools()
+      //
+      // `dataTools()` writes rows but cannot read one back, so the three
+      // table-scoped content reads come along — they resolve a reusable data
+      // table's id just as they resolve a post type's. Without them an agent
+      // in the Data workspace could create a table and fill it, then have no
+      // way to see what it wrote.
+      return [
+        ...dataTools(),
+        ...tableScopedReadTools.map((t) => ({ ...t, mutates: false })),
+      ]
     case 'plugin':
       // Reserved: no plugin-scope toolset yet.
       return []

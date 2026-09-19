@@ -20,6 +20,7 @@
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { CoreCapability } from '@core/capabilities'
 import type { DataRow, DataRowStatus } from '@core/data/schemas'
+import { DataDeleteRowsOutputSchema, DataSetRowsStatusOutputSchema } from '@core/ai'
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { createAuditEvent, type AuditAction } from '../../../repositories/audit'
 import {
@@ -84,6 +85,7 @@ function setRowsStatusTool(runtime?: DataToolsRuntime): AiTool {
     description:
       `Publish, unpublish, or return to draft up to ${MAX_ROWS_PER_CALL} rows. Rows are processed one by one and the result lists what succeeded and what did not — a failure part-way through does not roll back the rows already published. Publishing a row in a table with no route base still makes it visible to loops on other pages; it just gets no public URL of its own.`,
     inputSchema: SetRowsStatusInput,
+    outputSchema: DataSetRowsStatusOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof SetRowsStatusInput>
       const updated: Array<{ id: string; slug: string; status: DataRowStatus }> = []
@@ -171,6 +173,7 @@ function deleteRowsTool(runtime?: DataToolsRuntime): AiTool {
     description:
       `Delete up to ${MAX_ROWS_PER_CALL} rows. The delete is soft — the rows stop being served and stop appearing anywhere, but stay recoverable in the database. Rows the caller may not edit are reported in \`failed\` and the rest are still deleted.`,
     inputSchema: DeleteRowsInput,
+    outputSchema: DataDeleteRowsOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof DeleteRowsInput>
       const deletable: DataRow[] = []

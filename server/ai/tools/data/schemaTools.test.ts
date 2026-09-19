@@ -7,6 +7,7 @@
  * unique index, the field normalizer).
  */
 import { beforeEach, describe, expect, it } from 'bun:test'
+import { Value } from '@sinclair/typebox/value'
 import type { CoreCapability } from '@core/capabilities'
 import type { DataTable } from '@core/data/schemas'
 import type { DbClient } from '../../../db/client'
@@ -99,6 +100,24 @@ describe('data_list_tables', () => {
     expect(trainings!.rowCount).toBe(0)
     // kind 'data' gets no route base, so no per-row public URLs.
     expect(trainings!.routable).toBe(false)
+  })
+
+  it('points at the content reads for table fields and rows', () => {
+    // The only way to read a data table's rows and field ids; if the pointer
+    // goes stale an agent has no path from a table id to its contents.
+    const description = toolByName('data_list_tables').description
+    expect(description).toContain('content_get_collection_schema')
+    expect(description).toContain('content_list_documents')
+  })
+
+  it('returns a payload matching its advertised outputSchema', async () => {
+    await run('data_create_table', {
+      name: 'Trainings',
+      kind: 'data',
+      fields: [{ id: 'name', label: 'Name', type: 'text' }],
+    }, db)
+    const result = await run('data_list_tables', {}, db)
+    expect(Value.Check(toolByName('data_list_tables').outputSchema!, result)).toBe(true)
   })
 
   it('never lists page, component, or layout tables', async () => {
