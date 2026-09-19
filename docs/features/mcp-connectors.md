@@ -190,6 +190,8 @@ They get their own headless toolset instead of being folded into `content_*`, be
 | `data_set_rows_status` | Publishes, unpublishes, or drafts rows in bulk, reporting per-row outcomes. | publish for `published`, edit otherwise |
 | `data_delete_rows` | Soft-deletes rows in bulk. | a content edit capability |
 
+Schema writes are granted separately from row writes: `data.custom.tables.manage` is its own **Data tables** section on the consent screen and in the access-token dialog, off by default. A connector that only fills rows never gets it, and an approver who does not hold it never sees the section. `data.system.tables.manage` is not offered at all — the four built-in tables refuse identity and built-in-field changes regardless, so the grant would read wider than it acts.
+
 Reading rows back is `content_list_documents` and `content_get_document`: both accept a reusable data table's id exactly as they accept a post type's, and `content_get_collection_schema` returns the field ids that `data_create_rows` keys its cells by. There is deliberately no `data_list_rows` / `data_get_row` duplicating them; the three descriptions point at each other so an agent finds the path from either side.
 
 Publishing a row in a table with no route base is allowed and normal. No static artefact is baked because there is no route to bake it at, but the row becomes `published`, which is what an `<instatic-loop>` on some other page reads.
