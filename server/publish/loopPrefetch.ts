@@ -236,16 +236,27 @@ interface ResolvedFilters {
 }
 
 /**
+ * Does the loop's filter carry tokens that need a render context? Lets the
+ * pagination endpoint, which has to resolve the page or entry itself to build
+ * that context, skip the lookup for the common untokenised filter.
+ */
+export function filterHasTokens(filters: Record<string, unknown>): boolean {
+  const value = filters.cellValue
+  return typeof value === 'string' && containsTokens(value)
+}
+
+/**
  * Resolve tokens in the filter values an author can write them into.
  *
  * A loop's `cellValue` is the only free-text filter input, and on an entry
  * template it is the one value that has to change per rendered row: a course
  * page's term list filters on THAT course, not on a name typed once into a
- * template shared by every course. Resolving it here — the single place every
- * render path funnels through before a source fetches — keeps the sources and
- * the SQL builder unaware that tokens exist.
+ * template shared by every course. Every path that fetches a loop's rows
+ * resolves through here — the page-render prefetch below and the infinite-loop
+ * pagination endpoint (`server/handlers/cms/loop.ts`) — which keeps the sources
+ * and the SQL builder unaware that tokens exist.
  */
-function resolveFilterTokens(
+export function resolveFilterTokens(
   filters: Record<string, unknown>,
   context: TemplateRenderDataContext | undefined,
 ): ResolvedFilters {
