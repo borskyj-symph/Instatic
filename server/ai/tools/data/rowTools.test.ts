@@ -15,7 +15,7 @@ import { createSqliteClient } from '../../../db/sqlite'
 import { sqliteMigrations } from '../../../db/migrations-sqlite'
 import { runMigrations } from '../../../db/runMigrations'
 import { listAuditEvents } from '../../../repositories/audit'
-import { getDataRow, listDataRows } from '../../../repositories/data'
+import { createDataRow, getDataRow, listDataRows } from '../../../repositories/data'
 import { MAIN_SCOPE } from '../../../branches/scope'
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { dataTools } from './index'
@@ -32,6 +32,9 @@ const FULL_CAPS: CoreCapability[] = [
 
 /** Can create a row but not edit one — the split `requireDataCreator` enforces. */
 const CREATE_ONLY_CAPS: CoreCapability[] = ['content.create', 'data.custom.tables.read']
+
+/** May edit any row, but only reads custom tables — system tables are off limits. */
+const CUSTOM_ONLY_EDIT_CAPS: CoreCapability[] = ['content.edit.any', 'data.custom.tables.read']
 
 async function freshDb(): Promise<DbClient> {
   const db = createSqliteClient(':memory:')
@@ -254,6 +257,27 @@ describe('data_update_row', () => {
     expect(result.error).toMatch(/not found/)
     const stored = await getDataRow(db, MAIN_SCOPE, rowId)
     expect(stored!.cells.price).toBe(100)
+  })
+
+  it('refuses a system-table row to a caller who cannot read system tables', async () => {
+    // content.edit.any passes the row check on every row, so the table-family
+    // boundary is the only thing keeping this caller out of `posts` — the
+    // same order the HTTP row routes enforce (GHSA-x69h).
+    const post = await createDataRow(db, MAIN_SCOPE, {
+      tableId: 'posts',
+      cells: { title: 'Hello', slug: 'hello' },
+      slug: 'hello',
+    }, 'user-1')
+
+    const result = await run('data_update_row', {
+      rowId: post.id,
+      cells: { title: 'Hijacked' },
+    }, db, CUSTOM_ONLY_EDIT_CAPS) as { ok: boolean; error: string }
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/not found/)
+    const stored = await getDataRow(db, MAIN_SCOPE, post.id)
+    expect(stored!.cells.title).toBe('Hello')
   })
 
   it('describes cells by field id and points at the schema and row reads', () => {

@@ -25,7 +25,6 @@ import type { AiTool, ToolContext } from '../../runtime/types'
 import { createAuditEvent, type AuditAction } from '../../../repositories/audit'
 import {
   createDataRowMany,
-  getDataRow,
   getDataRowBySlug,
   getDataTable,
   saveDataRowDraft,
@@ -36,7 +35,7 @@ import {
   emitContentEntryUpdated,
 } from '../../../publish/contentEvents'
 import { canEditDataRow, canReadTable } from '../../../handlers/cms/data/access'
-import { toolActor } from './access'
+import { loadRowForTool, toolActor } from './access'
 import type { DataToolsRuntime } from './runtime'
 
 /** Mirrors `requireDataCreator` — creating a row is one capability, not a family. */
@@ -167,13 +166,9 @@ function updateRowTool(runtime?: DataToolsRuntime): AiTool {
     outputSchema: DataUpdateRowOutputSchema,
     handler: async (input, ctx: ToolContext) => {
       const args = input as Static<typeof UpdateRowInput>
-      const current = await getDataRow(ctx.db, ctx.branch, args.rowId)
-      if (!current || !canEditDataRow(toolActor(ctx), current)) {
-        return { ok: false, error: `Row ${args.rowId} not found.` }
-      }
-
-      const table = await getDataTable(ctx.db, ctx.branch, current.tableId)
-      if (!table) return { ok: false, error: `Row ${args.rowId} not found.` }
+      const loaded = await loadRowForTool(ctx, args.rowId, canEditDataRow)
+      if (!loaded) return { ok: false, error: `Row ${args.rowId} not found.` }
+      const { row: current, table } = loaded
 
       const rawCells = args.merge === false ? args.cells : { ...current.cells, ...args.cells }
       const cells = await applyContentEntryCellsFilter(rawCells, {

@@ -24,7 +24,6 @@ import { DataDeleteRowsOutputSchema, DataSetRowsStatusOutputSchema } from '@core
 import type { AiTool, ToolContext } from '../../runtime/types'
 import { createAuditEvent, type AuditAction } from '../../../repositories/audit'
 import {
-  getDataRow,
   softDeleteDataRowMany,
   updateDataRowStatus,
 } from '../../../repositories/data'
@@ -33,7 +32,7 @@ import { bumpPublishVersionSerialized } from '../../../publish/publishState'
 import { emitContentEntryDeleted, emitContentEntryUpdated } from '../../../publish/contentEvents'
 import { canEditDataRow, canPublishDataRow } from '../../../handlers/cms/data/access'
 import { isMainScope } from '../../../branches/scope'
-import { toolActor } from './access'
+import { loadRowForTool } from './access'
 import type { DataToolsRuntime } from './runtime'
 
 /**
@@ -109,14 +108,15 @@ function setRowsStatusTool(runtime?: DataToolsRuntime): AiTool {
       const failed: RowFailure[] = []
 
       for (const rowId of args.rowIds) {
-        const current = await getDataRow(ctx.db, ctx.branch, rowId)
         // Publishing and retracting are separate permissions on the HTTP
         // surface, so the per-row check has to follow the requested status
         // rather than the tool's coarse capability gate.
-        const allowed = current && (args.status === 'published'
-          ? canPublishDataRow(toolActor(ctx), current)
-          : canEditDataRow(toolActor(ctx), current))
-        if (!current || !allowed) {
+        const allowed = await loadRowForTool(
+          ctx,
+          rowId,
+          args.status === 'published' ? canPublishDataRow : canEditDataRow,
+        )
+        if (!allowed) {
           failed.push({ rowId, error: `Row ${rowId} not found.` })
           continue
         }
@@ -200,12 +200,12 @@ function deleteRowsTool(runtime?: DataToolsRuntime): AiTool {
       const failed: RowFailure[] = []
 
       for (const rowId of args.rowIds) {
-        const row = await getDataRow(ctx.db, ctx.branch, rowId)
-        if (!row || !canEditDataRow(toolActor(ctx), row)) {
+        const loaded = await loadRowForTool(ctx, rowId, canEditDataRow)
+        if (!loaded) {
           failed.push({ rowId, error: `Row ${rowId} not found.` })
           continue
         }
-        deletable.push(row)
+        deletable.push(loaded.row)
       }
 
       if (deletable.length === 0) return { deleted: [], failed }

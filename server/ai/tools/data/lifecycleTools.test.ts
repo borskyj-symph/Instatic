@@ -19,7 +19,7 @@ import { createSqliteClient } from '../../../db/sqlite'
 import { sqliteMigrations } from '../../../db/migrations-sqlite'
 import { runMigrations } from '../../../db/runMigrations'
 import { listAuditEvents } from '../../../repositories/audit'
-import { getDataRow, listDataRows } from '../../../repositories/data'
+import { createDataRow, getDataRow, listDataRows } from '../../../repositories/data'
 import { MAIN_SCOPE, type BranchScope } from '../../../branches/scope'
 import { forkBranch } from '../../../branches/fork'
 import { getPublishVersion } from '../../../publish/publishState'
@@ -248,6 +248,56 @@ describe('data_delete_rows', () => {
     expect(result.deleted).toHaveLength(0)
     expect(result.failed).toHaveLength(2)
     expect(await listDataRows(db, MAIN_SCOPE, seeded.tableId)).toHaveLength(3)
+  })
+})
+
+/**
+ * A broad `content.*` capability passes the per-row check on any row, so the
+ * table-family boundary is what keeps a custom-tables-only caller out of the
+ * seeded system tables — the order the HTTP row routes enforce (GHSA-x69h).
+ */
+describe('system-table rows', () => {
+  /** Publishes, retracts and deletes any row, but reads only custom tables. */
+  const CUSTOM_ONLY_CAPS: CoreCapability[] = [
+    'content.edit.any',
+    'content.publish.any',
+    'data.custom.tables.read',
+  ]
+
+  let db: DbClient
+  let postId: string
+
+  beforeEach(async () => {
+    db = await freshDb()
+    const post = await createDataRow(db, MAIN_SCOPE, {
+      tableId: 'posts',
+      cells: { title: 'Hello', slug: 'hello' },
+      slug: 'hello',
+    }, 'user-1')
+    postId = post.id
+  })
+
+  it('refuses to publish or retract a post for a caller who cannot read system tables', async () => {
+    for (const status of ['published', 'unpublished'] as const) {
+      const result = await run('data_set_rows_status', {
+        rowIds: [postId],
+        status,
+      }, db, CUSTOM_ONLY_CAPS) as { updated: unknown[]; failed: Array<{ error: string }> }
+
+      expect(result.updated).toHaveLength(0)
+      expect(result.failed[0].error).toMatch(/not found/)
+    }
+    expect((await getDataRow(db, MAIN_SCOPE, postId))!.status).toBe('draft')
+  })
+
+  it('refuses to delete a post for a caller who cannot read system tables', async () => {
+    const result = await run('data_delete_rows', {
+      rowIds: [postId],
+    }, db, CUSTOM_ONLY_CAPS) as { deleted: unknown[]; failed: unknown[] }
+
+    expect(result.deleted).toHaveLength(0)
+    expect(result.failed).toHaveLength(1)
+    expect(await getDataRow(db, MAIN_SCOPE, postId)).not.toBeNull()
   })
 })
 
